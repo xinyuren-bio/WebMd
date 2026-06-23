@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# 运行时任务数据（不上传）
+backend/tasks/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

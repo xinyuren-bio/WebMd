@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>生物分子动力学模拟体系搭建 - GROMACS + AmberTools</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="header">
+    <h1>生物分子动力学模拟体系搭建</h1>
+    <p class="subtitle">GROMACS 引擎 · 蛋白 Amber14SB · 小分子 GAFF2 · TIP3P 水 · 上传 PDB + mol2 自动前处理</p>
+  </header>
+
+  <!-- Step 1: Upload -->
+  <section class="card" id="section-upload">
+    <div class="step-badge">1</div>
+    <h2>上传文件</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="pdb-file">蛋白 PDB 文件</label>
+        <div class="file-input-wrapper">
+          <input type="file" id="pdb-file" accept=".pdb">
+          <span class="file-name" id="pdb-name">未选择文件</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="mol2-file">小分子 MOL2 文件</label>
+        <div class="file-input-wrapper">
+          <input type="file" id="mol2-file" accept=".mol2">
+          <span class="file-name" id="mol2-name">未选择文件</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Step 2: Parameters -->
+  <section class="card" id="section-params">
+    <div class="step-badge">2</div>
+    <h2>模拟参数</h2>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label for="sim-time">模拟时长 (ns)</label>
+        <input type="number" id="sim-time" value="100" min="0.1" step="0.1">
+      </div>
+      <div class="form-group">
+        <label for="temperature">温度 (K)</label>
+        <input type="number" id="temperature" value="298.15" min="0" step="0.01">
+      </div>
+      <div class="form-group">
+        <label for="pressure">压强 (bar)</label>
+        <input type="number" id="pressure" value="1.0" min="0" step="0.1">
+      </div>
+      <div class="form-group">
+        <label for="timestep">时间步长 (fs)</label>
+        <input type="number" id="timestep" value="2" min="0.1" step="0.1">
+      </div>
+      <div class="form-group">
+        <label for="ion-conc">离子浓度 (M)</label>
+        <input type="number" id="ion-conc" value="0.15" min="0" step="0.01">
+      </div>
+    </div>
+
+    <details class="advanced-params">
+      <summary>高级参数</summary>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="constraints">约束方式</label>
+          <select id="constraints">
+            <option value="HBonds" selected>HBonds (h-bonds)</option>
+            <option value="AllBonds">AllBonds (all-bonds)</option>
+            <option value="HAngles">HAngles (h-angles)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="nonbonded-cutoff">非键截断 (nm)</label>
+          <input type="number" id="nonbonded-cutoff" value="1.0" min="0.5" step="0.1">
+        </div>
+        <div class="form-group">
+          <label for="box-padding">溶剂盒子边距 (Å)</label>
+          <input type="number" id="box-padding" value="10.0" min="5.0" step="1.0">
+        </div>
+        <div class="form-group">
+          <label for="tau-t">温控耦合 τ (ps)</label>
+          <input type="number" id="tau-t" value="0.1" min="0.01" step="0.01">
+        </div>
+        <div class="form-group">
+          <label for="tau-p">压控耦合 τ (ps)</label>
+          <input type="number" id="tau-p" value="2.0" min="0.1" step="0.1">
+        </div>
+        <div class="form-group">
+          <label for="report-interval">轨迹输出间隔 (ps)</label>
+          <input type="number" id="report-interval" value="100" min="1" step="1">
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- Step 3: Submit & Progress -->
+  <section class="card" id="section-action">
+    <div class="step-badge">3</div>
+    <h2>提交与进度</h2>
+
+    <div class="action-row">
+      <button id="btn-submit" class="btn btn-primary">开始准备模拟体系</button>
+      <span id="submit-hint" class="hint">请先上传两个文件</span>
+    </div>
+
+    <div id="progress-area" class="hidden">
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+      <p class="progress-text" id="progress-text">等待中...</p>
+      <p class="task-id" id="task-id-display"></p>
+    </div>
+
+    <div id="error-area" class="hidden error-box">
+      <strong>错误:</strong> <span id="error-msg"></span>
+    </div>
+  </section>
+
+  <!-- Step 4: Download & Viewer -->
+  <section class="card hidden" id="section-download">
+    <div class="step-badge">4</div>
+    <h2>下载与预览</h2>
+    <a id="btn-download" class="btn btn-success" href="#" download>下载模拟文件包 (tar.gz)</a>
+    <p class="hint">含 system.gro、system.top、mdp/、run_md.sh 等完整 GROMACS 模拟文件</p>
+  </section>
+
+  <section class="card hidden" id="section-viewer">
+    <div class="step-badge">5</div>
+    <h2>复合物 3D 预览</h2>
+    <p class="hint" id="viewer-hint">基于 NGL 渲染，仅显示蛋白与小分子配体</p>
+    <div id="viewer-error" class="viewer-error hidden" role="alert"></div>
+    <details id="viewer-debug-wrap" class="viewer-debug-wrap hidden">
+      <summary>可视化诊断信息</summary>
+      <pre id="viewer-debug" class="viewer-debug"></pre>
+    </details>
+
+    <div class="viewer-toolbar">
+      <label for="viewer-style">显示样式</label>
+      <select id="viewer-style">
+        <option value="cartoon-ligand" selected>蛋白卡通 + 配体球棍</option>
+        <option value="surface-ligand">蛋白表面 + 配体棍状</option>
+        <option value="licorice-all">全原子棍状</option>
+        <option value="cartoon-spacefill">蛋白卡通 + 配体空间填充</option>
+      </select>
+      <button type="button" id="btn-reset-view" class="btn btn-secondary">重置视角</button>
+    </div>
+
+    <div id="ngl-viewport" class="ngl-viewport"></div>
+    <p class="hint viewer-note">鼠标拖拽旋转 · 滚轮缩放 · 右键平移</p>
+  </section>
+
+  <section class="card hidden" id="section-ligand-ff">
+    <div class="step-badge">6</div>
+    <h2>配体 GAFF2 力场</h2>
+    <p class="hint" id="ligand-ff-hint">可视化 antechamber 赋原子的 GAFF2 原子类型与 AM1-BCC 部分电荷</p>
+
+    <div class="ligand-ff-summary" id="ligand-ff-summary"></div>
+
+    <div class="ligand-ff-layout">
+      <div class="ligand-ff-left">
+        <div class="viewer-toolbar">
+          <label for="ligand-ff-color">着色方式</label>
+          <select id="ligand-ff-color">
+            <option value="charge" selected>部分电荷 (红负蓝正)</option>
+            <option value="atomtype">GAFF 原子类型</option>
+            <option value="element">元素颜色</option>
+          </select>
+          <button type="button" id="ligand-ff-reset" class="btn btn-secondary">重置视角</button>
+        </div>
+        <div id="ligand-ff-viewport" class="ngl-viewport ligand-ff-viewport"></div>
+      </div>
+
+      <div class="ligand-ff-right">
+        <div class="ligand-ff-tabs" id="ligand-ff-tabs">
+          <button type="button" class="active" data-tab="atoms">原子</button>
+          <button type="button" data-tab="bonds">键</button>
+          <button type="button" data-tab="angles">键角</button>
+          <button type="button" data-tab="impropers">异常二面角</button>
+        </div>
+        <div id="ligand-ff-table-wrap" class="ligand-ff-table-wrap"></div>
+        <p class="hint">点击表格行 → 左侧 3D 高亮；frcmod 中补充的键角/二面角参数来自 parmchk2</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pipeline -->
+  <section class="card" id="section-pipeline">
+    <h2>处理流程</h2>
+    <div class="pipeline">
+      <div class="pipe-step" id="pipe-protein">
+        <span class="pipe-icon">&#x1F9EC;</span>
+        <span>PDBFixer<br>蛋白修复</span>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step" id="pipe-ligand">
+        <span class="pipe-icon">&#x2697;</span>
+        <span>antechamber<br>GAFF2参数化</span>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step" id="pipe-solvation">
+        <span class="pipe-icon">&#x1F4A7;</span>
+        <span>tleap<br>构体系+溶剂化</span>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step" id="pipe-convert">
+        <span class="pipe-icon">&#x1F504;</span>
+        <span>acpype<br>转GROMACS</span>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step" id="pipe-mdp">
+        <span class="pipe-icon">&#x2699;</span>
+        <span>生成<br>mdp+脚本</span>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script src="/js/ngl.js"></script>
+<script src="/js/viewer.js"></script>
+<script src="/js/ligand_ff.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
