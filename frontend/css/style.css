@@ -164,7 +164,7 @@ body.workspace-analysis .site-nav-link[data-workspace="analysis"].active {
   color: var(--color-analysis);
 }
 
-/* ---- Landing (CB-Dock3 风格) ---- */
+/* ---- Landing 首页 ---- */
 .view-intro.hidden {
   display: none !important;
 }
@@ -530,11 +530,6 @@ body.workspace-analysis .site-nav-link[data-workspace="analysis"].active {
   margin-top: 8px;
   padding-top: 16px;
   border-top: 1px solid rgba(255,255,255,0.08);
-}
-
-.footer-copy .app-version {
-  color: rgba(255,255,255,0.65);
-  font-weight: 600;
 }
 
 @media (max-width: 1024px) {
