@@ -1,6 +1,22 @@
 # GROMACS 分子动力学模拟体系搭建工具
 
+**当前版本：v1.0**
+
 Web 界面驱动的蛋白-配体 MD 前处理流水线，自动生成 GROMACS 可运行的模拟文件包。
+
+## 版本与回溯
+
+| 版本 | 说明 |
+|------|------|
+| **v1.0** | 首版 UI：CB-Dock3 风格主页、体系准备、轨迹分析双工作区 |
+
+回溯到 v1.0：
+
+```bash
+git checkout v1.0          # 只读查看该版本
+git checkout -b restore-v1.0 v1.0   # 基于 v1.0 开新分支继续改
+git restore --source=v1.0 -- frontend/   # 仅恢复前端目录到 v1.0
+```
 
 ## 功能
 

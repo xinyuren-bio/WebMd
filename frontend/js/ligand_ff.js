@@ -14,6 +14,7 @@
   var tabBar = document.getElementById("ligand-ff-tabs");
   var tableWrap = document.getElementById("ligand-ff-table-wrap");
   var btnReset = document.getElementById("ligand-ff-reset");
+  var ffError = document.getElementById("ligand-ff-error");
 
   var TYPE_COLORS = [
     0xff6b6b, 0x4ecdc4, 0x45b7d1, 0xf9ca24, 0x6c5ce7,
@@ -49,27 +50,88 @@
     return ELEMENT_COLORS[k] !== undefined ? ELEMENT_COLORS[k] : 0xff00ff;
   }
 
-  function buildIdMaps(atoms) {
-    var id2charge = {};
-    var id2typeIdx = {};
-    var id2element = {};
+  function buildIndexMaps(c, atoms) {
     var tmap = typeColorMap(atoms);
-    atoms.forEach(function (a) {
-      id2charge[a.id] = a.charge;
-      id2typeIdx[a.id] = tmap[a.atom_type];
-      id2element[a.id] = guessElement(a.name);
+    var byId = {};
+    atoms.forEach(function (a) { byId[a.id] = a; });
+
+    var idx2charge = [];
+    var idx2typeIdx = [];
+    var idx2element = [];
+
+    c.structure.eachAtom(function (ap) {
+      var serial = ap.serial;
+      if (!serial || serial < 1) serial = ap.index + 1;
+      var fa = byId[serial] || atoms[ap.index];
+      idx2charge[ap.index] = fa ? fa.charge : 0;
+      idx2typeIdx[ap.index] = fa ? (tmap[fa.atom_type] || 0) : 0;
+      idx2element[ap.index] = fa ? guessElement(fa.name) : guessElement(ap.atomname);
     });
-    return { id2charge: id2charge, id2typeIdx: id2typeIdx, id2element: id2element };
+
+    return { idx2charge: idx2charge, idx2typeIdx: idx2typeIdx, idx2element: idx2element };
   }
 
-  function atomIdFromProxy(p) {
-    // mol2 原子序号与 ffData.id 一致（1-based）
-    if (p.atom.serial !== undefined) return p.atom.serial;
-    return p.atom.index + 1;
+  // NGL 不支持 color: function()，须用 ColormakerRegistry.addScheme
+  function registerColorScheme(tag, atomColorFn) {
+    if (!window.NGL || !NGL.ColormakerRegistry) return "element";
+    return NGL.ColormakerRegistry.addScheme(function () {
+      this.atomColor = atomColorFn;
+    }, tag);
+  }
+
+  // 电荷 → 颜色（红负蓝正，与界面说明一致）
+  function lerpChannel(a, b, t) {
+    return Math.round(a + (b - a) * t);
+  }
+
+  function chargeToColor(charge, minC, maxC) {
+    var absMax = Math.max(Math.abs(minC), Math.abs(maxC), 1e-6);
+    var t = Math.min(1, Math.abs(charge) / absMax);
+    if (charge < 0) {
+      return (
+        (lerpChannel(255, 255, t) << 16) |
+        (lerpChannel(255, 32, t) << 8) |
+        lerpChannel(255, 32, t)
+      );
+    }
+    if (charge > 0) {
+      return (
+        (lerpChannel(255, 48, t) << 16) |
+        (lerpChannel(255, 80, t) << 8) |
+        lerpChannel(255, 248, t)
+      );
+    }
+    return 0xffffff;
   }
 
   function setHint(t) {
     if (hint) hint.textContent = t;
+  }
+
+  function clearError() {
+    if (!ffError) return;
+    ffError.textContent = "";
+    ffError.classList.add("hidden");
+  }
+
+  function showError(msg) {
+    if (!ffError) return;
+    ffError.textContent = msg;
+    ffError.classList.remove("hidden");
+  }
+
+  function formatErr(err, step) {
+    var msg = err && err.message ? err.message : String(err);
+    return (step ? "[" + step + "] " : "") + msg;
+  }
+
+  function safeAddRep(type, params, label, repErrors) {
+    try {
+      comp.addRepresentation(type, params);
+    } catch (e) {
+      var line = "添加 " + type + " 失败 (" + label + "): " + (e.message || e);
+      repErrors.push(line);
+    }
   }
 
   function typeColorMap(atoms) {
@@ -128,7 +190,8 @@
     clearHighlight();
     highlightRepr = comp.addRepresentation("ball+stick", {
       sele: seleFromIds(ids),
-      color: color || 0xff3300,
+      colorScheme: "uniform",
+      colorValue: color || 0xff3300,
       scale: 1.6,
       aspectRatio: 1.4,
     });
@@ -138,51 +201,65 @@
 
   function applyColorMode(mode) {
     if (!comp || !ffData) return;
+    clearError();
     comp.removeAllRepresentations();
     clearHighlight();
 
     var atoms = ffData.molecule.atoms;
-    var maps = buildIdMaps(atoms);
-    var id2charge = maps.id2charge;
-    var id2typeIdx = maps.id2typeIdx;
-    var id2element = maps.id2element;
+    var maps = buildIndexMaps(comp, atoms);
+    var repErrors = [];
 
     if (mode === "charge") {
-      comp.addRepresentation("ball+stick", {
+      var minC = ffData.summary.charge_min;
+      var maxC = ffData.summary.charge_max;
+      var absMax = Math.max(Math.abs(minC), Math.abs(maxC), 1e-6);
+      var atomData = new Float32Array(comp.structure.atomCount);
+      maps.idx2charge.forEach(function (q, idx) {
+        if (q !== undefined) atomData[idx] = q;
+      });
+      safeAddRep("ball+stick", {
         sele: "all",
         colorScheme: "value",
-        colorScale: "RdBu",
-        colorDomain: [ffData.summary.charge_min, ffData.summary.charge_max],
-        colorValue: function (p) {
-          return id2charge[atomIdFromProxy(p)] || 0;
-        },
-      });
+        colorScale: "rwb",
+        colorDomain: [-absMax, absMax],
+        colorData: { atomData: atomData },
+      }, "部分电荷", repErrors);
     } else if (mode === "atomtype") {
-      comp.addRepresentation("ball+stick", {
-        sele: "all",
-        color: function (p) {
-          var idx = id2typeIdx[atomIdFromProxy(p)] || 0;
-          return TYPE_COLORS[idx % TYPE_COLORS.length];
-        },
+      var t2 = maps.idx2typeIdx;
+      var schemeId = registerColorScheme("ligand-ff-atomtype", function (atom) {
+        var idx = t2[atom.index] || 0;
+        return TYPE_COLORS[idx % TYPE_COLORS.length];
       });
+      safeAddRep("ball+stick", {
+        sele: "all",
+        colorScheme: schemeId,
+      }, "GAFF 类型", repErrors);
     } else {
-      comp.addRepresentation("ball+stick", {
-        sele: "all",
-        color: function (p) {
-          var aid = atomIdFromProxy(p);
-          var el = id2element[aid] || guessElement(p.atomname);
-          return elementColor(el);
-        },
+      var e2 = maps.idx2element;
+      var schemeIdEl = registerColorScheme("ligand-ff-element", function (atom) {
+        var el = e2[atom.index] || guessElement(atom.atomname);
+        return elementColor(el);
       });
+      safeAddRep("ball+stick", {
+        sele: "all",
+        colorScheme: schemeIdEl,
+      }, "元素颜色", repErrors);
     }
 
-    comp.addRepresentation("label", {
+    safeAddRep("label", {
       sele: "all",
       labelType: "atomname",
       color: "black",
       radiusScale: 0.7,
       showBackground: false,
-    });
+    }, "原子标签", repErrors);
+
+    var reprCount = comp.reprList ? comp.reprList.length : (comp.representations || []).length;
+    if (reprCount === 0) {
+      showError("渲染失败：未成功创建任何表示方式。\n" + repErrors.join("\n"));
+    } else if (repErrors.length > 0) {
+      showError("部分表示方式失败：\n" + repErrors.join("\n"));
+    }
 
     comp.autoView(800);
     if (stage) stage.handleResize();
@@ -303,11 +380,19 @@
 
   function load(taskId) {
     if (!section) return;
+    clearError();
 
     waitNgl(function () {
       setHint("正在加载配体力场…");
       afterLayout(function () {
-        ensureStage();
+        try {
+          ensureStage();
+        } catch (err) {
+          showError(formatErr(err, "初始化"));
+          setHint("可视化初始化失败");
+          return;
+        }
+
         var ffUrl = "/api/tasks/" + taskId + "/ligand/forcefield";
         var molUrl = "/api/tasks/" + taskId + "/ligand/structure.mol2";
 
@@ -338,7 +423,9 @@
             setHint("点击表格行可在左侧 3D 视图中高亮对应原子/键角");
           })
           .catch(function (err) {
-            setHint("配体力场加载失败: " + (err.message || err));
+            var msg = formatErr(err, "加载");
+            showError(msg);
+            setHint("配体力场加载失败");
           });
       });
     });
@@ -351,12 +438,17 @@
       comp = null;
     }
     ffData = null;
+    clearError();
     if (tableWrap) tableWrap.innerHTML = "";
   }
 
   if (colorMode) {
     colorMode.addEventListener("change", function () {
-      applyColorMode(colorMode.value);
+      try {
+        applyColorMode(colorMode.value);
+      } catch (e) {
+        showError(formatErr(e, "切换着色"));
+      }
     });
   }
 

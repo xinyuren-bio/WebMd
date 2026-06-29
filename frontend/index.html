@@ -3,21 +3,204 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>生物分子动力学模拟体系搭建 - GROMACS + AmberTools</title>
+<title>WebMD</title>
 <link rel="stylesheet" href="/css/style.css">
+<link rel="stylesheet" href="/css/interaction.css">
 </head>
-<body>
-<div id="app">
+<body class="app-shell workspace-intro">
 
-  <header class="header">
-    <h1>生物分子动力学模拟体系搭建</h1>
-    <p class="subtitle">GROMACS 引擎 · 蛋白 Amber14SB · 小分子 GAFF2 · TIP3P 水 · 上传 PDB + mol2 自动前处理</p>
+<header class="site-header">
+  <div class="site-header-inner">
+    <a class="site-brand" href="/" id="site-brand-home">WebMD</a>
+    <nav class="site-nav" aria-label="主功能">
+      <button type="button" class="site-nav-link workspace-nav" data-workspace="prepare">体系准备</button>
+      <button type="button" class="site-nav-link workspace-nav" data-workspace="analysis">轨迹分析</button>
+    </nav>
+  </div>
+</header>
+
+<section class="view-intro view-panel active" id="view-intro" data-workspace="intro">
+
+  <div class="landing-hero-wrap">
+    <div class="landing-container landing-hero-grid">
+      <div class="landing-hero-text">
+        <p class="landing-eyebrow">GROMACS · Protein-Ligand MD</p>
+        <h1 class="landing-title">WebMD</h1>
+        <p class="landing-tagline">蛋白-配体分子动力学 · 体系搭建与轨迹分析</p>
+        <p class="landing-summary">
+          WebMD 提供从体系准备到轨迹分析的一站式 MD 工作流：自动完成蛋白修复、GAFF2 配体参数化、
+          溶剂化与 GROMACS 文件生成，并支持 RMSD、氢键、接触与自由能景观等后处理分析模块。
+        </p>
+        <div class="landing-actions">
+          <button type="button" class="btn btn-hero-primary" data-go="prepare">开始体系准备</button>
+          <button type="button" class="btn btn-hero-outline" data-go="analysis">轨迹分析</button>
+        </div>
+      </div>
+      <div class="landing-hero-visual" aria-hidden="true">
+        <div class="mol-scene">
+          <div class="mol-glow"></div>
+          <svg class="mol-svg" viewBox="0 0 420 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="210" cy="180" r="120" stroke="rgba(15,118,110,0.15)" stroke-width="1.5" stroke-dasharray="6 4"/>
+            <circle cx="210" cy="180" r="80" stroke="rgba(99,102,241,0.2)" stroke-width="1"/>
+            <path d="M120 140 Q160 90 210 110 T300 130" stroke="#0d9488" stroke-width="2.5" fill="none" opacity="0.7"/>
+            <path d="M130 220 Q180 260 210 240 T310 200" stroke="#6366f1" stroke-width="2" fill="none" opacity="0.6"/>
+            <circle cx="160" cy="130" r="14" fill="#0f766e" opacity="0.85"/>
+            <circle cx="210" cy="110" r="18" fill="#0891b2" opacity="0.9"/>
+            <circle cx="270" cy="140" r="12" fill="#0d9488" opacity="0.8"/>
+            <circle cx="300" cy="190" r="10" fill="#6366f1" opacity="0.75"/>
+            <circle cx="250" cy="240" r="16" fill="#4f46e5" opacity="0.85"/>
+            <circle cx="180" cy="250" r="11" fill="#0f766e" opacity="0.7"/>
+            <circle cx="140" cy="200" r="9" fill="#6366f1" opacity="0.65"/>
+            <line x1="160" y1="130" x2="210" y2="110" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
+            <line x1="210" y1="110" x2="270" y2="140" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
+            <line x1="270" y1="140" x2="300" y2="190" stroke="rgba(255,255,255,0.35)" stroke-width="1.5"/>
+            <line x1="300" y1="190" x2="250" y2="240" stroke="rgba(255,255,255,0.35)" stroke-width="1.5"/>
+            <line x1="250" y1="240" x2="180" y2="250" stroke="rgba(255,255,255,0.35)" stroke-width="1.5"/>
+            <line x1="180" y1="250" x2="140" y2="200" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
+            <line x1="140" y1="200" x2="160" y2="130" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
+          </svg>
+          <div class="mol-label mol-label-a">Protein</div>
+          <div class="mol-label mol-label-b">Ligand</div>
+          <div class="mol-label mol-label-c">Solvent</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="landing-section landing-pipeline">
+    <div class="landing-container">
+      <h2 class="landing-section-title">工作流程与功能</h2>
+      <p class="landing-section-desc">集成 AmberTools 与 GROMACS 工具链，自动完成 MD 前处理全流程</p>
+      <div class="landing-feature-grid">
+        <article class="landing-feature-card">
+          <div class="feature-icon feature-icon-1">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2L4 7v10l8 5 8-5V7l-8-5z" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <h3>1. 结构上传</h3>
+          <p>支持蛋白 PDB 与配体 MOL2 格式，作为 MD 模拟的输入结构。</p>
+        </article>
+        <article class="landing-feature-card">
+          <div class="feature-icon feature-icon-2">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/><path d="M8 12h8M12 8v8" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <h3>2. 蛋白修复与参数化</h3>
+          <p>PDBFixer 补残基/氢原子，antechamber 生成 GAFF2 力场与 AM1-BCC 电荷。</p>
+        </article>
+        <article class="landing-feature-card">
+          <div class="feature-icon feature-icon-3">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 18c4-8 12-8 16 0" stroke="currentColor" stroke-width="1.5"/><path d="M6 14c3-5 9-5 12 0" stroke="currentColor" stroke-width="1.5" opacity="0.6"/></svg>
+          </div>
+          <h3>3. 体系构建与溶剂化</h3>
+          <p>tleap 合并蛋白-配体、TIP3P 溶剂化、按浓度加盐，生成 Amber 拓扑。</p>
+        </article>
+        <article class="landing-feature-card">
+          <div class="feature-icon feature-icon-4">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M7 7h10v10H7z" stroke="currentColor" stroke-width="1.5"/><path d="M4 4h4M16 4h4M4 20h4M16 20h4" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <h3>4. GROMACS 转换</h3>
+          <p>acpype 将 Amber 拓扑转为 GROMACS gro/top，并生成 em/nvt/npt/md 四套 mdp 文件。</p>
+        </article>
+        <article class="landing-feature-card">
+          <div class="feature-icon feature-icon-5">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 18V6M8 18V10M12 18V4M16 18V12M20 18V8" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <h3>5. 轨迹分析</h3>
+          <p>上传 xtc/tpr 数据，一键运行 RMSD、氢键、RMSF、接触热图与自由能景观分析。</p>
+        </article>
+      </div>
+    </div>
+  </div>
+
+  <div class="landing-section landing-apps">
+    <div class="landing-container">
+      <h2 class="landing-section-title">应用场景</h2>
+      <div class="landing-apps-grid">
+        <article class="landing-app-card">
+          <h3>结合稳定性评估</h3>
+          <p>通过 RMSD、Rg 与氢键时间线，评估蛋白-配体复合物在模拟过程中的结构稳定性。</p>
+        </article>
+        <article class="landing-app-card">
+          <h3>相互作用分析</h3>
+          <p>残基接触频率与 RMSF 分析，揭示关键结合位点与柔性区域。</p>
+        </article>
+        <article class="landing-app-card">
+          <h3>构象采样研究</h3>
+          <p>PCA 与自由能景观（FEL）分析，探索配体结合的多构象状态与能量分布。</p>
+        </article>
+        <article class="landing-app-card">
+          <h3>模拟文件一键生成</h3>
+          <p>自动生成 GROMACS 拓扑、坐标、mdp 参数与 run_md.sh 脚本，开箱即用。</p>
+        </article>
+      </div>
+    </div>
+  </div>
+
+  <div class="landing-section landing-portals-section">
+    <div class="landing-container">
+      <div class="landing-portals">
+        <button type="button" class="portal-card portal-prepare" data-go="prepare">
+          <div class="portal-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 2c-1 3-3 5-3 8a3 3 0 006 0c0-3-2-5-3-8z" stroke="currentColor" stroke-width="1.5"/><path d="M8 14c-2 1-3 3-3 5h14c0-2-1-4-3-5" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <h2>体系准备</h2>
+          <p class="portal-desc">上传 PDB + MOL2，自动修复、参数化、溶剂化，生成 GROMACS 可运行文件包</p>
+          <ul class="portal-features">
+            <li>PDBFixer 蛋白修复</li>
+            <li>GAFF2 配体参数化</li>
+            <li>tleap 溶剂化 + acpype 转换</li>
+          </ul>
+          <span class="portal-cta">进入体系准备 →</span>
+        </button>
+        <button type="button" class="portal-card portal-analysis" data-go="analysis">
+          <div class="portal-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M4 18V8M9 18V4M14 18V12M19 18V6" stroke="currentColor" stroke-width="1.5"/></svg>
+          </div>
+          <h2>轨迹分析</h2>
+          <p class="portal-desc">上传 MD 轨迹，运行 RMSD、氢键、接触、自由能景观等分析模块</p>
+          <ul class="portal-features">
+            <li>RMSD / Rg / RMSF</li>
+            <li>氢键时间线与接触热图</li>
+            <li>PCA + 自由能景观 FEL</li>
+          </ul>
+          <span class="portal-cta">进入轨迹分析 →</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="landing-footer">
+    <div class="landing-container landing-footer-inner">
+      <div class="footer-brand">
+        <strong>WebMD</strong>
+        <span>蛋白-配体分子动力学 · GROMACS</span>
+      </div>
+      <div class="footer-links">
+        <button type="button" data-go="prepare">体系准备</button>
+        <button type="button" data-go="analysis">轨迹分析</button>
+      </div>
+      <p class="footer-copy">Amber ff14SB · GAFF2 · TIP3P · GROMACS · <span class="app-version">v1.0</span></p>
+    </div>
+  </footer>
+
+</section>
+
+<div id="app" class="hidden">
+
+<div class="workspace-panel" data-workspace="prepare" role="tabpanel" hidden>
+  <header class="workspace-header">
+    <span class="workspace-header-badge">Prepare</span>
+    <h1>体系准备</h1>
+    <p>上传结构文件并设置模拟参数，自动生成 GROMACS 拓扑、坐标与 mdp 脚本</p>
   </header>
 
-  <!-- Step 1: Upload -->
-  <section class="card" id="section-upload">
-    <div class="step-badge">1</div>
-    <h2>上传文件</h2>
+<section class="card" id="section-upload">
+    <div class="card-header">
+      <div class="step-badge">1</div>
+      <div>
+        <h2>上传文件</h2>
+        <p class="card-subtitle">蛋白 PDB 与配体 MOL2 为必填项</p>
+      </div>
+    </div>
     <div class="form-row">
       <div class="form-group">
         <label for="pdb-file">蛋白 PDB 文件</label>
@@ -36,11 +219,14 @@
     </div>
   </section>
 
-  <!-- Step 2: Parameters -->
   <section class="card" id="section-params">
-    <div class="step-badge">2</div>
-    <h2>模拟参数</h2>
-
+    <div class="card-header">
+      <div class="step-badge">2</div>
+      <div>
+        <h2>模拟参数</h2>
+        <p class="card-subtitle">温度、压强、时长等核心 MD 设置</p>
+      </div>
+    </div>
     <div class="form-row">
       <div class="form-group">
         <label for="sim-time">模拟时长 (ns)</label>
@@ -63,7 +249,6 @@
         <input type="number" id="ion-conc" value="0.15" min="0" step="0.01">
       </div>
     </div>
-
     <details class="advanced-params">
       <summary>高级参数</summary>
       <div class="form-row">
@@ -99,16 +284,18 @@
     </details>
   </section>
 
-  <!-- Step 3: Submit & Progress -->
   <section class="card" id="section-action">
-    <div class="step-badge">3</div>
-    <h2>提交与进度</h2>
-
+    <div class="card-header">
+      <div class="step-badge">3</div>
+      <div>
+        <h2>提交与进度</h2>
+        <p class="card-subtitle">启动流水线并实时查看处理状态</p>
+      </div>
+    </div>
     <div class="action-row">
       <button id="btn-submit" class="btn btn-primary">开始准备模拟体系</button>
       <span id="submit-hint" class="hint">请先上传两个文件</span>
     </div>
-
     <div id="progress-area" class="hidden">
       <div class="progress-bar-bg">
         <div class="progress-bar-fill" id="progress-fill"></div>
@@ -116,52 +303,60 @@
       <p class="progress-text" id="progress-text">等待中...</p>
       <p class="task-id" id="task-id-display"></p>
     </div>
-
     <div id="error-area" class="hidden error-box">
       <strong>错误:</strong> <span id="error-msg"></span>
     </div>
   </section>
 
-  <!-- Step 4: Download & Viewer -->
   <section class="card hidden" id="section-download">
-    <div class="step-badge">4</div>
-    <h2>下载与预览</h2>
+    <div class="card-header">
+      <div class="step-badge">4</div>
+      <div>
+        <h2>下载与预览</h2>
+        <p class="card-subtitle">获取 tar.gz 结果包</p>
+      </div>
+    </div>
     <a id="btn-download" class="btn btn-success" href="#" download>下载模拟文件包 (tar.gz)</a>
-    <p class="hint">含 system.gro、system.top、mdp/、run_md.sh 等完整 GROMACS 模拟文件</p>
   </section>
 
   <section class="card hidden" id="section-viewer">
-    <div class="step-badge">5</div>
-    <h2>复合物 3D 预览</h2>
-    <p class="hint" id="viewer-hint">基于 NGL 渲染，仅显示蛋白与小分子配体</p>
+    <div class="card-header">
+      <div class="step-badge">5</div>
+      <div>
+        <h2>复合物 3D 预览</h2>
+        <p class="card-subtitle">交互式查看蛋白-配体复合物结构</p>
+      </div>
+    </div>
     <div id="viewer-error" class="viewer-error hidden" role="alert"></div>
     <details id="viewer-debug-wrap" class="viewer-debug-wrap hidden">
       <summary>可视化诊断信息</summary>
       <pre id="viewer-debug" class="viewer-debug"></pre>
     </details>
-
     <div class="viewer-toolbar">
       <label for="viewer-style">显示样式</label>
       <select id="viewer-style">
         <option value="cartoon-ligand" selected>蛋白卡通 + 配体球棍</option>
+        <option value="baker-overall">Baker 全览（马卡龙卡通 + 半透明表面 + 黄色配体）</option>
+        <option value="baker-pocket">Baker 口袋（相互作用残基 + 极性接触 + 标签）</option>
         <option value="surface-ligand">蛋白表面 + 配体棍状</option>
         <option value="licorice-all">全原子棍状</option>
         <option value="cartoon-spacefill">蛋白卡通 + 配体空间填充</option>
       </select>
       <button type="button" id="btn-reset-view" class="btn btn-secondary">重置视角</button>
     </div>
-
     <div id="ngl-viewport" class="ngl-viewport"></div>
-    <p class="hint viewer-note">鼠标拖拽旋转 · 滚轮缩放 · 右键平移</p>
   </section>
 
   <section class="card hidden" id="section-ligand-ff">
-    <div class="step-badge">6</div>
-    <h2>配体 GAFF2 力场</h2>
-    <p class="hint" id="ligand-ff-hint">可视化 antechamber 赋原子的 GAFF2 原子类型与 AM1-BCC 部分电荷</p>
-
+    <div class="card-header">
+      <div class="step-badge">6</div>
+      <div>
+        <h2>配体 GAFF2 力场</h2>
+        <p class="card-subtitle">查看原子类型、电荷与键参数</p>
+      </div>
+    </div>
+    <div id="ligand-ff-error" class="viewer-error hidden" role="alert"></div>
     <div class="ligand-ff-summary" id="ligand-ff-summary"></div>
-
     <div class="ligand-ff-layout">
       <div class="ligand-ff-left">
         <div class="viewer-toolbar">
@@ -175,7 +370,6 @@
         </div>
         <div id="ligand-ff-viewport" class="ngl-viewport ligand-ff-viewport"></div>
       </div>
-
       <div class="ligand-ff-right">
         <div class="ligand-ff-tabs" id="ligand-ff-tabs">
           <button type="button" class="active" data-tab="atoms">原子</button>
@@ -184,12 +378,10 @@
           <button type="button" data-tab="impropers">异常二面角</button>
         </div>
         <div id="ligand-ff-table-wrap" class="ligand-ff-table-wrap"></div>
-        <p class="hint">点击表格行 → 左侧 3D 高亮；frcmod 中补充的键角/二面角参数来自 parmchk2</p>
       </div>
     </div>
   </section>
 
-  <!-- Pipeline -->
   <section class="card" id="section-pipeline">
     <h2>处理流程</h2>
     <div class="pipeline">
@@ -219,12 +411,179 @@
       </div>
     </div>
   </section>
+</div>
+
+<div class="workspace-panel" data-workspace="analysis" role="tabpanel" hidden>
+<section class="card card-interaction" id="section-interaction">
+    <div class="interaction-hero">
+      <h2>轨迹分析</h2>
+      <p class="interaction-intro">上传 config.yaml 或 zip 数据包（含 tpr / xtc / ndx / top / pdb），勾选分析模块后运行</p>
+    </div>
+
+    <div class="interaction-body">
+    <div class="interaction-section-title">
+      <span class="section-num">1</span>
+      上传数据
+    </div>
+    <div class="interaction-upload-grid">
+      <div class="interaction-upload-panel">
+        <h3>config.yaml</h3>
+        <p class="upload-desc">解析 workdir 与 inputs 路径，与本地 md_xhs 目录结构一致</p>
+        <div class="file-input-wrapper">
+          <input type="file" id="interaction-config" accept=".yaml,.yml">
+          <span class="file-name">解析 workdir 与 inputs 路径</span>
+        </div>
+      </div>
+      <div class="interaction-upload-panel">
+        <h3>数据包 zip</h3>
+        <p class="upload-desc">含 tpr / xtc / ndx / top / pdb 等轨迹文件</p>
+        <div class="file-input-wrapper">
+          <input type="file" id="interaction-zip" accept=".zip,.tar.gz,.tgz">
+          <span class="file-name">含 tpr / xtc / ndx / top / pdb</span>
+        </div>
+        <ul class="interaction-file-list">
+          <li><span class="fname">md.tpr</span><span class="fstatus ok">已识别</span></li>
+          <li><span class="fname">fit.xtc</span><span class="fstatus ok">已识别</span></li>
+          <li><span class="fname">to.ndx</span><span class="fstatus ok">已识别</span></li>
+          <li><span class="fname">topol.top</span><span class="fstatus wait">待上传</span></li>
+          <li><span class="fname">complex.pdb</span><span class="fstatus ok">已识别</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="interaction-modules">
+      <div class="interaction-section-title">
+        <span class="section-num">2</span>
+        选择分析模块
+      </div>
+      <div class="interaction-select-row">
+        <button type="button" id="interaction-select-all">全选</button>
+        <button type="button" id="interaction-select-core">仅核心（RMSD + 氢键 + 接触）</button>
+        <button type="button" id="interaction-select-none">清空</button>
+      </div>
+      <div class="interaction-module-grid">
+        <label class="interaction-module-card selected" data-core="1">
+          <input type="checkbox" checked data-step="gmx_rms">
+          <div class="mod-title">RMSD</div>
+          <div class="mod-desc">gmx rms · Backbone / Protein / Ligand / Complex</div>
+          <span class="mod-tag core">稳定性</span>
+        </label>
+        <label class="interaction-module-card selected" data-core="1">
+          <input type="checkbox" checked data-step="gmx_gyrate">
+          <div class="mod-title">回转半径 Rg</div>
+          <div class="mod-desc">gmx gyrate · 蛋白-配体紧凑度</div>
+          <span class="mod-tag core">稳定性</span>
+        </label>
+        <label class="interaction-module-card selected" data-core="1">
+          <input type="checkbox" checked data-step="analysis_py">
+          <div class="mod-title">RMSF &amp; 接触</div>
+          <div class="mod-desc">MDAnalysis · 残基波动 + 接触热图/频率</div>
+          <span class="mod-tag core">相互作用</span>
+        </label>
+        <label class="interaction-module-card selected" data-core="1">
+          <input type="checkbox" checked data-step="hbond_py">
+          <div class="mod-title">氢键时间线</div>
+          <div class="mod-desc">蛋白-配体 H 键热图 + 逐帧 CSV</div>
+          <span class="mod-tag core">相互作用</span>
+        </label>
+        <label class="interaction-module-card selected">
+          <input type="checkbox" checked data-step="pca_combine">
+          <div class="mod-title">PCA 合并</div>
+          <div class="mod-desc">RMSD + Rg → output.xvg</div>
+          <span class="mod-tag">FEL 前置</span>
+        </label>
+        <label class="interaction-module-card selected">
+          <input type="checkbox" checked data-step="gmx_sham">
+          <div class="mod-title">gmx sham</div>
+          <div class="mod-desc">自由能 SHAM · gibbs.xpm</div>
+          <span class="mod-tag">FEL 前置</span>
+        </label>
+        <label class="interaction-module-card selected">
+          <input type="checkbox" checked data-step="fel_py">
+          <div class="mod-title">自由能景观 FEL</div>
+          <div class="mod-desc">2D / 3D 自由能面图</div>
+          <span class="mod-tag">高级</span>
+        </label>
+        <label class="interaction-module-card">
+          <input type="checkbox" data-step="update_sim_docs">
+          <div class="mod-title">模拟说明文档</div>
+          <div class="mod-desc">从 topol.top 提取力场体系说明</div>
+          <span class="mod-tag">文档</span>
+        </label>
+      </div>
+    </div>
+
+    <details class="interaction-advanced">
+      <summary>高级参数（对应 config.yaml 中的 analysis_py / hbond_py / gmx_groups）</summary>
+      <div class="interaction-param-groups">
+        <div class="interaction-param-group">
+          <h4>analysis_py</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>配体 resname</label>
+              <input type="text" value="LIG" placeholder="LIG / UNL">
+            </div>
+            <div class="form-group">
+              <label>接触 cutoff (Å)</label>
+              <input type="number" value="4.5" step="0.1">
+            </div>
+            <div class="form-group">
+              <label>分析截止 (ns)</label>
+              <input type="text" value="" placeholder="空 = 全轨迹">
+            </div>
+          </div>
+        </div>
+        <div class="interaction-param-group">
+          <h4>hbond_py</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>D-A 距离 (Å)</label>
+              <input type="number" value="3.0" step="0.1">
+            </div>
+            <div class="form-group">
+              <label>角度 cutoff (°)</label>
+              <input type="number" value="150">
+            </div>
+            <div class="form-group">
+              <label>最小频率</label>
+              <input type="number" value="0.05" step="0.01">
+            </div>
+          </div>
+        </div>
+        <div class="interaction-param-group">
+          <h4>gmx_groups</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>RMS 叠合组</label>
+              <input type="number" value="8">
+            </div>
+            <div class="form-group">
+              <label>RMSD 计算组</label>
+              <input type="number" value="24">
+            </div>
+            <div class="form-group">
+              <label>Rg 选择组</label>
+              <input type="number" value="5">
+            </div>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <div class="action-row">
+      <button type="button" class="btn btn-primary" disabled>开始分析</button>
+    </div>
+    </div>
+  </section>
+</div>
 
 </div>
 
+<script src="/js/main_tabs.js"></script>
 <script src="/js/ngl.js"></script>
 <script src="/js/viewer.js"></script>
 <script src="/js/ligand_ff.js"></script>
 <script src="/js/app.js"></script>
+<script src="/js/interaction_analysis.js"></script>
 </body>
 </html>

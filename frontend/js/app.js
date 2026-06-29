@@ -27,11 +27,13 @@
 
   pdbInput.addEventListener("change", function () {
     pdbName.textContent = this.files[0] ? this.files[0].name : "未选择文件";
+    pdbName.classList.toggle("has-file", !!this.files[0]);
     updateSubmitButton();
   });
 
   mol2Input.addEventListener("change", function () {
     mol2Name.textContent = this.files[0] ? this.files[0].name : "未选择文件";
+    mol2Name.classList.toggle("has-file", !!this.files[0]);
     updateSubmitButton();
   });
 

@@ -160,6 +160,263 @@
     }
   }
 
+  // 对齐 pymol_viz/docking_viz.py 的 Baker lab 马卡龙配色
+  var BAKER_MACARON = [
+    "#b0a3d1", "#99c7e0", "#a6d1b5", "#dedb8c",
+    "#fadf8c", "#f7b07d", "#f5a37d",
+  ];
+  var BAKER_LIGAND_C = "#ffff00";   // PyMOL yellow
+  var BAKER_POCKET_C = "#0089a8";   // PyMOL tv_blue
+  var BAKER_SURFACE = "#cccccc";    // PyMOL gray80
+  var BAKER_BG_GREY = "#bfbfbf";    // style_pocket 背景灰卡通
+
+  // Baker 配体 stick 元素着色（对齐 PyMOL _color_by_element，用 color 回调避免 Colormaker ES6 问题）
+  function guessElementFromName(n) {
+    var s = (n || "").trim();
+    if (!s) return "C";
+    s = s.replace(/[0-9]+$/, "");
+    if (s.length >= 2 && s.charAt(1) === s.charAt(1).toLowerCase()) {
+      return s.charAt(0).toUpperCase() + s.charAt(1).toLowerCase();
+    }
+    return s.charAt(0).toUpperCase();
+  }
+
+  function bakerLigandColor(p, carbonHex) {
+    var e = (p.element || guessElementFromName(p.atomname) || "C").toUpperCase();
+    if (e === "C") return hexToInt(carbonHex);
+    if (e === "O") return 0xff0000;
+    if (e === "N") return 0x0000ff;
+    if (e === "S") return 0xffff00;
+    if (e === "P") return 0xff8800;
+    if (e === "F" || e === "CL" || e === "BR") return 0x808080;
+    return 0xcccccc;
+  }
+
+  function hexToInt(hex) {
+    return parseInt(String(hex).replace("#", ""), 16);
+  }
+
+  // 配体 stick：单层 licorice；NGL 须用 addScheme，不能 color: function()
+  function addLigandSticks(ligSele, safeAdd, label, opts) {
+    opts = opts || {};
+    if (!ligSele || countAtoms(ligSele) === 0) return;
+
+    var heavySele = ligSele + " and not hydrogen";
+    if (countAtoms(heavySele) === 0) heavySele = ligSele;
+    var carbonHex = opts.carbonColor || BAKER_LIGAND_C;
+
+    var schemeId = "element";
+    if (window.NGL && NGL.ColormakerRegistry) {
+      schemeId = NGL.ColormakerRegistry.addScheme(function () {
+        this.atomColor = function (atom) {
+          return bakerLigandColor(atom, carbonHex);
+        };
+      }, "baker-ligand-stick");
+    }
+
+    safeAdd("licorice", {
+      sele: heavySele,
+      colorScheme: schemeId,
+      multipleBond: true,
+      radius: opts.radius || 0.2,
+    }, label);
+  }
+
+  function buildDistancePocketSele(comp, ligSele, proteinSele, radius) {
+    if (!comp || !comp.structure || countAtoms(ligSele) === 0) return "";
+    try {
+      var ligSelection = new NGL.Selection(ligSele);
+      var nearSet = comp.structure.getAtomSetWithinSelection(ligSelection, radius);
+      var proteinSet = comp.structure.getAtomSet(new NGL.Selection(proteinSele));
+      var pocketAtoms = nearSet.clone();
+      pocketAtoms.intersection(proteinSet);
+      var pocketRes = comp.structure.getAtomSetWithinGroup(pocketAtoms);
+      var seleStr = pocketRes.toSeleString();
+      return seleStr && seleStr !== "NONE" ? seleStr : "";
+    } catch (e) {
+      logDebug("距离口袋", "构建失败: " + (e.message || e));
+      return "";
+    }
+  }
+
+  // 对齐 detect_interacting_residues：氢键 + 盐桥残基
+  function detectInteractingPocketSele(comp, ligSele, proteinSele) {
+    if (!comp || !comp.structure || countAtoms(ligSele) === 0) return "";
+    try {
+      var structure = comp.structure;
+      var ligSelection = new NGL.Selection(ligSele);
+
+      var nearH = structure.getAtomSetWithinSelection(ligSelection, 3.5);
+      var polarProtein = structure.getAtomSet(new NGL.Selection(
+        proteinSele + " and (_O or _N or _S)"
+      ));
+      var polarNear = nearH.clone();
+      polarNear.intersection(polarProtein);
+      var polarRes = structure.getAtomSetWithinGroup(polarNear);
+
+      var nearSalt = structure.getAtomSetWithinSelection(ligSelection, 4.0);
+      var charged = structure.getAtomSet(new NGL.Selection(
+        proteinSele + " and (ASP or GLU or LYS or ARG or HIS)"
+      ));
+      var saltNear = nearSalt.clone();
+      saltNear.intersection(charged);
+      var saltRes = structure.getAtomSetWithinGroup(saltNear);
+
+      var combined = polarRes.clone();
+      combined.union(saltRes);
+      if (combined.getSize() === 0) return "";
+
+      var seleStr = combined.toSeleString();
+      return seleStr && seleStr !== "NONE" ? seleStr : "";
+    } catch (e) {
+      logDebug("相互作用口袋", "检测失败: " + (e.message || e));
+      return "";
+    }
+  }
+
+  function collectProteinChains(comp, protSele) {
+    var chains = [];
+    var seen = {};
+    try {
+      comp.structure.eachPolymer(function (polymer) {
+        var chainId = polymer.chainProxy.chainname || "";
+        if (seen[chainId]) return;
+        var chainSele = chainId.trim()
+          ? "(" + protSele + ") and :" + chainId.trim()
+          : protSele;
+        if (countAtoms(chainSele) > 0) {
+          seen[chainId] = true;
+          chains.push(chainId);
+        }
+      });
+    } catch (e) {
+      logDebug("链检测", e.message || e);
+    }
+    return chains;
+  }
+
+  function chainSelection(protSele, chainId) {
+    if (chainId && chainId.trim()) {
+      return "(" + protSele + ") and :" + chainId.trim();
+    }
+    return protSele;
+  }
+
+  // 口袋侧链：ball+stick 保持键完整
+  function addConnectedBallStick(sele, safeAdd, label, opts) {
+    opts = opts || {};
+    if (!sele || countAtoms(sele) === 0) return;
+
+    var heavySele = sele + " and not hydrogen";
+    if (countAtoms(heavySele) === 0) heavySele = sele;
+
+    var params = {
+      sele: heavySele,
+      color: opts.color || "element",
+      aspectRatio: opts.aspectRatio || 1.2,
+      multipleBond: true,
+      opacity: 1,
+    };
+    if (opts.colorValue) params.colorValue = opts.colorValue;
+    if (opts.radius) params.radius = opts.radius;
+
+    safeAdd("ball+stick", params, label);
+  }
+
+  // style_overall：马卡龙卡通 + 半透明表面 + 配体 stick
+  function applyBakerOverall(ligSele, protSele, safeAdd) {
+    var chains = collectProteinChains(currentComp, protSele);
+    if (chains.length === 0) chains = [""];
+
+    chains.forEach(function (chainId, idx) {
+      var sele = chainSelection(protSele, chainId);
+      var color = BAKER_MACARON[idx % BAKER_MACARON.length];
+      var chainLabel = chainId.trim() || "all";
+
+      safeAdd("cartoon", {
+        sele: sele,
+        color: "uniform",
+        colorValue: color,
+        aspectRatio: 3,
+      }, "卡通 " + chainLabel);
+
+      safeAdd("surface", {
+        sele: sele,
+        color: "uniform",
+        colorValue: color,
+        opacity: 0.6,
+        surfaceType: "ms",
+        side: "front",
+      }, "表面 " + chainLabel);
+    });
+
+    addLigandSticks(ligSele, safeAdd, "配体", { radius: 0.2 });
+  }
+
+  // style_pocket：灰背景卡通 + 口袋表面/侧链 + 黄色配体 + 极性接触 + 标签
+  function applyBakerPocket(ligSele, protSele, safeAdd) {
+    var pocketSele = detectInteractingPocketSele(currentComp, ligSele, protSele);
+    var pocketMode = "interaction";
+
+    if (!pocketSele || countAtoms(pocketSele) === 0) {
+      pocketSele = buildDistancePocketSele(currentComp, ligSele, protSele, 5.0);
+      pocketMode = "distance";
+    }
+
+    var nPocket = pocketSele ? countAtoms(pocketSele) : 0;
+    var nLigHeavy = countAtoms(ligSele + " and not hydrogen");
+    logDebug("Baker 口袋", pocketMode + " 模式，口袋原子=" + nPocket + "，配体重原子=" + nLigHeavy);
+
+    safeAdd("cartoon", {
+      sele: protSele,
+      color: "uniform",
+      colorValue: BAKER_BG_GREY,
+      opacity: 0.45,
+      side: "front",
+    }, "背景蛋白卡通");
+
+    if (pocketSele && nPocket > 0) {
+      safeAdd("surface", {
+        sele: pocketSele,
+        color: "uniform",
+        colorValue: BAKER_SURFACE,
+        opacity: 0.35,
+        surfaceType: "ms",
+        side: "front",
+      }, "口袋表面");
+
+      var pocketSide = "(" + pocketSele + ") and sidechain";
+      addConnectedBallStick(pocketSide, safeAdd, "口袋侧链", {
+        aspectRatio: 1.2,
+      });
+
+      safeAdd("contact", {
+        sele: ligSele + " or " + pocketSele,
+        contactType: "polar",
+        maxDistance: 3.5,
+        linewidth: 2.5,
+        opacity: 0.9,
+      }, "极性接触");
+
+      safeAdd("label", {
+        sele: pocketSele + " and .CA",
+        labelType: "residue",
+        color: "black",
+        fontSize: 14,
+      }, "残基标签");
+    }
+
+    // 配体最后渲染，避免被半透明蛋白/表面遮挡
+    addLigandSticks(ligSele, safeAdd, "配体", { radius: 0.22 });
+
+    if (nLigHeavy > 0) {
+      return pocketSele && nPocket > 0
+        ? "(" + ligSele + ") or (" + pocketSele + ")"
+        : ligSele;
+    }
+    return pocketSele || ligSele;
+  }
+
   function applyStyle(style) {
     if (!currentComp || !stage) {
       showError("无法应用样式：结构或 Stage 未就绪");
@@ -187,7 +444,13 @@
       }
     }
 
-    if (style === "cartoon-ligand") {
+    var focusSele = null;
+
+    if (style === "baker-overall") {
+      applyBakerOverall(ligSele, protSele, safeAdd);
+    } else if (style === "baker-pocket") {
+      focusSele = applyBakerPocket(ligSele, protSele, safeAdd);
+    } else if (style === "cartoon-ligand") {
       safeAdd("cartoon", { sele: protSele, color: "chainid" }, "蛋白");
       safeAdd("ball+stick", { sele: ligSele, color: "element" }, "配体");
     } else if (style === "surface-ligand") {
@@ -213,7 +476,13 @@
     logDebug("表示层数量", String(reprCount));
     logDebug("Canvas(渲染前)", getCanvasInfo());
 
-    currentComp.autoView(800);
+    if (focusSele && countAtoms(focusSele) > 0) {
+      currentComp.autoView(focusSele, 800);
+    } else if (style === "baker-pocket" && nLig > 0) {
+      currentComp.autoView(ligSele, 800);
+    } else {
+      currentComp.autoView(800);
+    }
     stage.handleResize();
     if (stage.viewer) stage.viewer.requestRender();
 
