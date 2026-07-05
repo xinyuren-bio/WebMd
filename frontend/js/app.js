@@ -67,7 +67,6 @@
     errorArea.classList.add("hidden");
     sectionDownload.classList.add("hidden");
     if (window.MdViewer) window.MdViewer.hide();
-    if (window.LigandFF) window.LigandFF.hide();
     progressArea.classList.remove("hidden");
     resetPipeline();
 
@@ -129,7 +128,6 @@
           btnDownload.href = "/api/tasks/" + taskId + "/download";
           sectionDownload.classList.remove("hidden");
           if (window.MdViewer) window.MdViewer.load(taskId);
-          if (window.LigandFF) window.LigandFF.load(taskId);
           btnSubmit.textContent = "重新提交";
           btnSubmit.disabled = false;
         }

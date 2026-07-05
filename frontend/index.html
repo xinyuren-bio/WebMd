@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260705">
+<link rel="stylesheet" href="/css/style.css?v=20260705b">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -354,41 +354,6 @@
     <div id="ngl-viewport" class="ngl-viewport"></div>
   </section>
 
-  <section class="card hidden" id="section-ligand-ff">
-    <div class="card-header">
-      <div class="step-badge">6</div>
-      <div>
-        <h2>配体 GAFF2 力场</h2>
-        <p class="card-subtitle">查看原子类型、电荷与键参数</p>
-      </div>
-    </div>
-    <div id="ligand-ff-error" class="viewer-error hidden" role="alert"></div>
-    <div class="ligand-ff-summary" id="ligand-ff-summary"></div>
-    <div class="ligand-ff-layout">
-      <div class="ligand-ff-left">
-        <div class="viewer-toolbar">
-          <label for="ligand-ff-color">着色方式</label>
-          <select id="ligand-ff-color">
-            <option value="charge" selected>部分电荷 (红负蓝正)</option>
-            <option value="atomtype">GAFF 原子类型</option>
-            <option value="element">元素颜色</option>
-          </select>
-          <button type="button" id="ligand-ff-reset" class="btn btn-secondary">重置视角</button>
-        </div>
-        <div id="ligand-ff-viewport" class="ngl-viewport ligand-ff-viewport"></div>
-      </div>
-      <div class="ligand-ff-right">
-        <div class="ligand-ff-tabs" id="ligand-ff-tabs">
-          <button type="button" class="active" data-tab="atoms">原子</button>
-          <button type="button" data-tab="bonds">键</button>
-          <button type="button" data-tab="angles">键角</button>
-          <button type="button" data-tab="impropers">异常二面角</button>
-        </div>
-        <div id="ligand-ff-table-wrap" class="ligand-ff-table-wrap"></div>
-      </div>
-    </div>
-  </section>
-
   <section class="card" id="section-pipeline">
     <h2>处理流程</h2>
     <div class="pipeline">
@@ -577,7 +542,6 @@
 <script src="/js/main_tabs.js"></script>
 <script src="/js/ngl.js"></script>
 <script src="/js/viewer.js"></script>
-<script src="/js/ligand_ff.js"></script>
 <script src="/js/app.js"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
