@@ -16,7 +16,7 @@
   var paymentError = document.getElementById("payment-error");
 
   var currentTaskId = null;
-  var paymentConfig = { amount: 30, qr_url: "/assets/images/wechat-pay.png" };
+  var paymentConfig = { amount: 30, qr_url: "/assets/images/pay.jpg" };
 
   function loadConfig() {
     fetch("/api/payment/config")
@@ -25,7 +25,7 @@
         if (!cfg) return;
         paymentConfig = cfg;
         if (btnPayDownload) {
-          btnPayDownload.textContent = "微信支付 ¥" + cfg.amount + " 后下载";
+          btnPayDownload.textContent = "支付宝支付 ¥" + cfg.amount + " 后下载";
         }
         if (amountEl) amountEl.textContent = cfg.amount;
         if (amountTextEl) amountTextEl.textContent = cfg.amount;
@@ -78,7 +78,7 @@
         if (data.qr_url && qrImg) qrImg.src = data.qr_url;
         if (data.amount != null) {
           paymentConfig.amount = data.amount;
-          if (btnPayDownload) btnPayDownload.textContent = "微信支付 ¥" + data.amount + " 后下载";
+          if (btnPayDownload) btnPayDownload.textContent = "支付宝支付 ¥" + data.amount + " 后下载";
         }
         setPaidUI(taskId, !!data.paid);
       })
