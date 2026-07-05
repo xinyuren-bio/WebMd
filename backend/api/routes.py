@@ -1,11 +1,12 @@
 import json
 import logging
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
-from config import TASKS_DIR, DEFAULT_PARAMS
+from config import TASKS_DIR, DEFAULT_PARAMS, PAYMENT_AMOUNT, PAYMENT_QR_URL, PAYMENT_CURRENCY
 from models import Task, TaskStatus, tasks
 from engine.pipeline import run_pipeline
 from engine.structure_export import ensure_complex_pdb
@@ -125,6 +126,49 @@ async def get_task(task_id: str):
     return task.to_dict()
 
 
+@router.get("/payment/config")
+async def get_payment_config():
+    """返回付费下载配置（金额与收款码）。"""
+    return {
+        "amount": PAYMENT_AMOUNT,
+        "currency": PAYMENT_CURRENCY,
+        "qr_url": PAYMENT_QR_URL,
+    }
+
+
+@router.get("/tasks/{task_id}/payment")
+async def get_task_payment(task_id: str):
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {
+        "task_id": task_id,
+        "paid": task.paid,
+        "paid_at": task.paid_at,
+        "amount": PAYMENT_AMOUNT,
+        "currency": PAYMENT_CURRENCY,
+        "qr_url": PAYMENT_QR_URL,
+    }
+
+
+@router.post("/tasks/{task_id}/payment/confirm")
+async def confirm_task_payment(task_id: str):
+    """用户扫码支付后确认，解锁下载。"""
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.status != TaskStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="任务尚未完成，暂不可支付下载")
+    if task.paid:
+        return {"task_id": task_id, "paid": True, "paid_at": task.paid_at}
+
+    task.paid = True
+    task.paid_at = time.time()
+    task.save()
+    logger.info("任务 %s 已确认支付", task_id)
+    return {"task_id": task_id, "paid": True, "paid_at": task.paid_at}
+
+
 @router.get("/tasks/{task_id}/download")
 async def download_task(task_id: str):
     task = tasks.get(task_id)
@@ -132,6 +176,8 @@ async def download_task(task_id: str):
         raise HTTPException(status_code=404, detail="任务不存在")
     if task.status != TaskStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="任务尚未完成")
+    if not task.paid:
+        raise HTTPException(status_code=402, detail="请先完成支付后再下载")
     if not task.output_file or not Path(task.output_file).exists():
         raise HTTPException(status_code=400, detail="输出文件不存在")
 

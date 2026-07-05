@@ -22,3 +22,8 @@ DEFAULT_PARAMS = {
 
 WATER_MODEL = "tip3p"
 PROTEIN_FF = "amber14sb"
+
+# 付费下载：将收款码图片放到 frontend/assets/images/wechat-pay.png
+PAYMENT_AMOUNT = 30.0
+PAYMENT_QR_URL = "/assets/images/wechat-pay.png"
+PAYMENT_CURRENCY = "CNY"

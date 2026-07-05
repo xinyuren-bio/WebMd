@@ -16,6 +16,7 @@
   const errorMsg = document.getElementById("error-msg");
   const sectionDownload = document.getElementById("section-download");
   const btnDownload = document.getElementById("btn-download");
+  const btnPayDownload = document.getElementById("btn-pay-download");
 
   const pipeSteps = {
     processing_protein: document.getElementById("pipe-protein"),
@@ -76,6 +77,7 @@
 
     errorArea.classList.add("hidden");
     sectionDownload.classList.add("hidden");
+    if (window.PaymentUI) window.PaymentUI.reset();
     progressArea.classList.remove("hidden");
     resetPipeline();
 
@@ -134,9 +136,9 @@
 
         if (task.status === "completed") {
           clearInterval(interval);
-          btnDownload.href = "/api/tasks/" + taskId + "/download";
           sectionDownload.classList.remove("hidden");
           if (window.MdViewer) window.MdViewer.load(taskId);
+          if (window.PaymentUI) window.PaymentUI.onTaskReady(taskId);
           btnSubmit.textContent = "重新提交";
           btnSubmit.disabled = false;
         }

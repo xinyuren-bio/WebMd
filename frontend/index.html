@@ -357,8 +357,31 @@
         <p class="card-subtitle">获取 tar.gz 模拟文件包</p>
       </div>
     </div>
-    <a id="btn-download" class="btn btn-success" href="#" download>下载模拟文件包 (tar.gz)</a>
+    <div class="download-actions">
+      <button type="button" id="btn-pay-download" class="btn btn-primary">微信支付 ¥30 后下载</button>
+      <a id="btn-download" class="btn btn-success hidden" href="#" download>下载模拟文件包 (tar.gz)</a>
+      <p class="hint" id="download-hint">扫码支付 ¥30 并确认后，即可下载结果包</p>
+    </div>
   </section>
+
+  <div id="payment-modal" class="payment-modal hidden" role="dialog" aria-modal="true" aria-labelledby="payment-modal-title">
+    <div class="payment-modal-backdrop" id="payment-modal-backdrop"></div>
+    <div class="payment-modal-panel">
+      <button type="button" class="payment-modal-close" id="payment-modal-close" aria-label="关闭">×</button>
+      <h3 id="payment-modal-title">微信扫码支付</h3>
+      <p class="payment-amount">¥<span id="payment-amount">30</span></p>
+      <div class="payment-qr-wrap">
+        <img id="payment-qr" src="/assets/images/wechat-pay.png" alt="微信收款码">
+      </div>
+      <p class="payment-note">请使用微信扫描上方二维码完成支付</p>
+      <p class="payment-task-id">转账备注请填写任务 ID：<code id="payment-task-id"></code></p>
+      <div class="payment-modal-actions">
+        <button type="button" class="btn btn-primary" id="payment-confirm">我已完成支付</button>
+        <button type="button" class="btn btn-secondary" id="payment-cancel">取消</button>
+      </div>
+      <p class="payment-error hidden" id="payment-error"></p>
+    </div>
+  </div>
 
   <section class="card" id="section-pipeline">
     <h2>处理流程</h2>
@@ -554,6 +577,7 @@
 <script src="/js/main_tabs.js"></script>
 <script src="/js/ngl.js"></script>
 <script src="/js/viewer.js"></script>
+<script src="/js/payment.js"></script>
 <script src="/js/app.js"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>

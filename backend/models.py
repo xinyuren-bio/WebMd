@@ -48,6 +48,8 @@ class Task:
     error_message: str = ""
     log_lines: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
+    paid: bool = False
+    paid_at: float | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +60,8 @@ class Task:
             "error_message": self.error_message,
             "output_file": self.output_file,
             "created_at": self.created_at,
+            "paid": self.paid,
+            "paid_at": self.paid_at,
         }
 
     def save(self) -> None:
@@ -74,6 +78,8 @@ class Task:
             "error_message": self.error_message,
             "log_lines": self.log_lines[-500:],
             "created_at": self.created_at,
+            "paid": self.paid,
+            "paid_at": self.paid_at,
         }
         meta.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -91,6 +97,8 @@ class Task:
                 error_message=data.get("error_message", ""),
                 log_lines=data.get("log_lines", []),
                 created_at=data.get("created_at", time.time()),
+                paid=data.get("paid", False),
+                paid_at=data.get("paid_at"),
             )
             return task
         except (json.JSONDecodeError, KeyError, ValueError) as e:
