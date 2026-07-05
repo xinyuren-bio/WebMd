@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260705b">
+<link rel="stylesheet" href="/css/style.css?v=20260705c">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -226,9 +226,37 @@
     </div>
   </section>
 
-  <section class="card" id="section-params">
+  <section class="card hidden" id="section-viewer">
     <div class="card-header">
       <div class="step-badge">2</div>
+      <div>
+        <h2>复合物 3D 预览</h2>
+        <p class="card-subtitle">上传 PDB 与 MOL2 后即可交互查看蛋白-配体结构</p>
+      </div>
+    </div>
+    <div id="viewer-error" class="viewer-error hidden" role="alert"></div>
+    <details id="viewer-debug-wrap" class="viewer-debug-wrap hidden">
+      <summary>可视化诊断信息</summary>
+      <pre id="viewer-debug" class="viewer-debug"></pre>
+    </details>
+    <div class="viewer-toolbar">
+      <label for="viewer-style">显示样式</label>
+      <select id="viewer-style">
+        <option value="cartoon-ligand" selected>蛋白卡通 + 配体球棍</option>
+        <option value="baker-overall">Baker 全览（马卡龙卡通 + 半透明表面 + 黄色配体）</option>
+        <option value="baker-pocket">Baker 口袋（相互作用残基 + 极性接触 + 标签）</option>
+        <option value="surface-ligand">蛋白表面 + 配体棍状</option>
+        <option value="licorice-all">全原子棍状</option>
+        <option value="cartoon-spacefill">蛋白卡通 + 配体空间填充</option>
+      </select>
+      <button type="button" id="btn-reset-view" class="btn btn-secondary">重置视角</button>
+    </div>
+    <div id="ngl-viewport" class="ngl-viewport"></div>
+  </section>
+
+  <section class="card" id="section-params">
+    <div class="card-header">
+      <div class="step-badge">3</div>
       <div>
         <h2>模拟参数</h2>
         <p class="card-subtitle">温度、压强、时长等核心 MD 设置</p>
@@ -293,7 +321,7 @@
 
   <section class="card" id="section-action">
     <div class="card-header">
-      <div class="step-badge">3</div>
+      <div class="step-badge">4</div>
       <div>
         <h2>提交与进度</h2>
         <p class="card-subtitle">启动流水线并实时查看处理状态</p>
@@ -317,41 +345,13 @@
 
   <section class="card hidden" id="section-download">
     <div class="card-header">
-      <div class="step-badge">4</div>
+      <div class="step-badge">5</div>
       <div>
-        <h2>下载与预览</h2>
-        <p class="card-subtitle">获取 tar.gz 结果包</p>
+        <h2>下载结果</h2>
+        <p class="card-subtitle">获取 tar.gz 模拟文件包</p>
       </div>
     </div>
     <a id="btn-download" class="btn btn-success" href="#" download>下载模拟文件包 (tar.gz)</a>
-  </section>
-
-  <section class="card hidden" id="section-viewer">
-    <div class="card-header">
-      <div class="step-badge">5</div>
-      <div>
-        <h2>复合物 3D 预览</h2>
-        <p class="card-subtitle">交互式查看蛋白-配体复合物结构</p>
-      </div>
-    </div>
-    <div id="viewer-error" class="viewer-error hidden" role="alert"></div>
-    <details id="viewer-debug-wrap" class="viewer-debug-wrap hidden">
-      <summary>可视化诊断信息</summary>
-      <pre id="viewer-debug" class="viewer-debug"></pre>
-    </details>
-    <div class="viewer-toolbar">
-      <label for="viewer-style">显示样式</label>
-      <select id="viewer-style">
-        <option value="cartoon-ligand" selected>蛋白卡通 + 配体球棍</option>
-        <option value="baker-overall">Baker 全览（马卡龙卡通 + 半透明表面 + 黄色配体）</option>
-        <option value="baker-pocket">Baker 口袋（相互作用残基 + 极性接触 + 标签）</option>
-        <option value="surface-ligand">蛋白表面 + 配体棍状</option>
-        <option value="licorice-all">全原子棍状</option>
-        <option value="cartoon-spacefill">蛋白卡通 + 配体空间填充</option>
-      </select>
-      <button type="button" id="btn-reset-view" class="btn btn-secondary">重置视角</button>
-    </div>
-    <div id="ngl-viewport" class="ngl-viewport"></div>
   </section>
 
   <section class="card" id="section-pipeline">

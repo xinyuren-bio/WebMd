@@ -3,6 +3,8 @@
 
   var stage = null;
   var currentComp = null;
+  var ligandComp = null;
+  var isLocalPreview = false;
   var debugLines = [];
 
   var sectionViewer = document.getElementById("section-viewer");
@@ -417,7 +419,82 @@
     return pocketSele || ligSele;
   }
 
+  function clearComponents() {
+    if (stage) {
+      if (currentComp) {
+        stage.removeComponent(currentComp);
+        currentComp = null;
+      }
+      if (ligandComp) {
+        stage.removeComponent(ligandComp);
+        ligandComp = null;
+      }
+    }
+  }
+
+  function applyDualStyle(style) {
+    if (!currentComp || !ligandComp || !stage) return;
+
+    clearError();
+    currentComp.removeAllRepresentations();
+    ligandComp.removeAllRepresentations();
+
+    var protSele = "protein or (polymer and not hetero)";
+    var repErrors = [];
+
+    function addProt(type, params, label) {
+      try {
+        currentComp.addRepresentation(type, Object.assign({ sele: protSele }, params));
+      } catch (e) {
+        repErrors.push((label || type) + ": " + (e.message || e));
+      }
+    }
+
+    function addLig(type, params, label) {
+      try {
+        ligandComp.addRepresentation(type, Object.assign({ sele: "all" }, params));
+      } catch (e) {
+        repErrors.push((label || type) + ": " + (e.message || e));
+      }
+    }
+
+    if (style === "baker-overall") {
+      addProt("cartoon", { color: "chainid" }, "蛋白");
+      addProt("surface", { color: "chainid", opacity: 0.35 }, "表面");
+      addLig("ball+stick", { color: "yellow" }, "配体");
+    } else if (style === "baker-pocket") {
+      addProt("cartoon", { color: "chainid", opacity: 0.5 }, "蛋白");
+      addProt("licorice", { sele: "protein", color: "element", radius: 0.12 }, "口袋");
+      addLig("ball+stick", { color: "yellow", radius: 0.22 }, "配体");
+    } else if (style === "surface-ligand") {
+      addProt("surface", { color: "chainid", opacity: 0.85 }, "蛋白表面");
+      addLig("licorice", { color: "element" }, "配体");
+    } else if (style === "licorice-all") {
+      addProt("licorice", { color: "element" }, "蛋白");
+      addLig("licorice", { color: "element" }, "配体");
+    } else if (style === "cartoon-spacefill") {
+      addProt("cartoon", { color: "chainid" }, "蛋白");
+      addLig("spacefill", { color: "element", scale: 0.35 }, "配体");
+    } else {
+      addProt("cartoon", { color: "chainid" }, "蛋白");
+      addLig("ball+stick", { color: "element" }, "配体");
+    }
+
+    stage.autoView(800);
+    stage.handleResize();
+    if (stage.viewer) stage.viewer.requestRender();
+
+    if (repErrors.length) {
+      showError("部分表示方式失败：\n" + repErrors.join("\n"));
+    }
+  }
+
   function applyStyle(style) {
+    if (isLocalPreview && currentComp && ligandComp) {
+      applyDualStyle(style);
+      return;
+    }
+
     if (!currentComp || !stage) {
       showError("无法应用样式：结构或 Stage 未就绪");
       return;
@@ -507,16 +584,18 @@
   function loadStructure(taskId) {
     if (!taskId || !sectionViewer) return;
 
+    isLocalPreview = false;
     resetDebug();
     logDebug("任务 ID", taskId);
 
     waitForNgl(function () {
-      setHint("正在加载复合物结构…");
+      setHint("正在加载处理后复合物…");
       logDebug("NGL 版本", NGL.version || "未知");
 
       afterLayout(function () {
         try {
           var st = createStage();
+          clearComponents();
           var url = "/api/tasks/" + taskId + "/structure/complex.pdb";
           logDebug("请求 URL", url);
 
@@ -533,7 +612,6 @@
                 throw new Error("PDB 内容为空或过短 (" + (pdbText ? pdbText.length : 0) + " 字符)");
               }
               logDebug("PDB 大小", pdbText.length + " 字符，前 40 字: " + pdbText.slice(0, 40).replace(/\n/g, " "));
-              if (currentComp) st.removeComponent(currentComp);
               return st.loadFile(new Blob([pdbText], { type: "text/plain" }), {
                 ext: "pdb",
                 defaultRepresentation: false,
@@ -546,7 +624,7 @@
               if (!n || n <= 0) {
                 throw new Error("PDB 解析后原子数为 0，请检查 complex.pdb 格式");
               }
-              setHint("蛋白 + 配体（已去除水分子与离子）· 共 " + n + " 原子");
+              setHint("处理后复合物 · 共 " + n + " 原子");
               applyStyle(styleSelect ? styleSelect.value : "cartoon-ligand");
             })
             .catch(function (err) {
@@ -565,12 +643,57 @@
     });
   }
 
+  function loadFromFiles(pdbFile, mol2File) {
+    if (!pdbFile || !mol2File || !sectionViewer) return;
+
+    isLocalPreview = true;
+    resetDebug();
+    logDebug("预览模式", "本地上传 PDB + MOL2");
+
+    waitForNgl(function () {
+      setHint("正在加载上传结构…");
+
+      afterLayout(function () {
+        try {
+          var st = createStage();
+          clearComponents();
+
+          Promise.all([
+            st.loadFile(pdbFile, { ext: "pdb", defaultRepresentation: false }),
+            st.loadFile(mol2File, { ext: "mol2", defaultRepresentation: false }),
+          ])
+            .then(function (comps) {
+              currentComp = comps[0];
+              ligandComp = comps[1];
+              var nProt = currentComp.structure.atomCount;
+              var nLig = ligandComp.structure.atomCount;
+              logDebug("解析结果", "蛋白原子=" + nProt + "，配体原子=" + nLig);
+              if (!nProt && !nLig) {
+                throw new Error("蛋白与配体结构均为空");
+              }
+              setHint("上传结构预览 · 蛋白 " + nProt + " 原子 + 配体 " + nLig + " 原子");
+              applyDualStyle(styleSelect ? styleSelect.value : "cartoon-ligand");
+            })
+            .catch(function (err) {
+              var msg = formatErr(err, "本地上传预览");
+              showError(msg);
+              setHint("预览加载失败");
+              logDebug("最终错误", msg);
+            });
+        } catch (err) {
+          var msg2 = formatErr(err, "初始化");
+          showError(msg2);
+          setHint("可视化初始化失败");
+          logDebug("最终错误", msg2);
+        }
+      });
+    });
+  }
+
   function hideViewer() {
     if (sectionViewer) sectionViewer.classList.add("hidden");
-    if (currentComp && stage) {
-      stage.removeComponent(currentComp);
-      currentComp = null;
-    }
+    clearComponents();
+    isLocalPreview = false;
     resetDebug();
   }
 
@@ -587,12 +710,14 @@
   if (btnResetView) {
     btnResetView.addEventListener("click", function () {
       try {
-        if (currentComp) {
-          currentComp.autoView(800);
-          if (stage) {
-            stage.handleResize();
-            if (stage.viewer) stage.viewer.requestRender();
+        if (stage) {
+          if (isLocalPreview && ligandComp) {
+            stage.autoView(800);
+          } else if (currentComp) {
+            currentComp.autoView(800);
           }
+          stage.handleResize();
+          if (stage.viewer) stage.viewer.requestRender();
           logDebug("操作", "已重置视角");
           logDebug("Canvas", getCanvasInfo());
         }
@@ -604,6 +729,7 @@
 
   window.MdViewer = {
     load: loadStructure,
+    loadFromFiles: loadFromFiles,
     hide: hideViewer,
   };
 })();

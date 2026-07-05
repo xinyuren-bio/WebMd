@@ -29,13 +29,23 @@
     pdbName.textContent = this.files[0] ? this.files[0].name : "未选择文件";
     pdbName.classList.toggle("has-file", !!this.files[0]);
     updateSubmitButton();
+    updatePreview();
   });
 
   mol2Input.addEventListener("change", function () {
     mol2Name.textContent = this.files[0] ? this.files[0].name : "未选择文件";
     mol2Name.classList.toggle("has-file", !!this.files[0]);
     updateSubmitButton();
+    updatePreview();
   });
+
+  function updatePreview() {
+    if (pdbInput.files[0] && mol2Input.files[0] && window.MdViewer && window.MdViewer.loadFromFiles) {
+      window.MdViewer.loadFromFiles(pdbInput.files[0], mol2Input.files[0]);
+    } else if (window.MdViewer) {
+      window.MdViewer.hide();
+    }
+  }
 
   function updateSubmitButton() {
     var ready = pdbInput.files[0] && mol2Input.files[0];
@@ -66,7 +76,6 @@
 
     errorArea.classList.add("hidden");
     sectionDownload.classList.add("hidden");
-    if (window.MdViewer) window.MdViewer.hide();
     progressArea.classList.remove("hidden");
     resetPipeline();
 
