@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260705d">
+<link rel="stylesheet" href="/css/style.css?v=20260705e">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -212,15 +212,21 @@
       <div class="form-group">
         <label for="pdb-file">蛋白 PDB 文件</label>
         <div class="file-input-wrapper">
-          <input type="file" id="pdb-file" accept=".pdb">
-          <span class="file-name" id="pdb-name">未选择文件</span>
+          <div class="file-input-zone">
+            <span class="file-input-btn">选取文件</span>
+            <span class="file-name" id="pdb-name">未选择文件</span>
+            <input type="file" id="pdb-file" accept=".pdb" class="file-input-native">
+          </div>
         </div>
       </div>
       <div class="form-group">
         <label for="mol2-file">小分子 MOL2 文件</label>
         <div class="file-input-wrapper">
-          <input type="file" id="mol2-file" accept=".mol2">
-          <span class="file-name" id="mol2-name">未选择文件</span>
+          <div class="file-input-zone">
+            <span class="file-input-btn">选取文件</span>
+            <span class="file-name" id="mol2-name">未选择文件</span>
+            <input type="file" id="mol2-file" accept=".mol2" class="file-input-native">
+          </div>
         </div>
       </div>
     </div>
@@ -402,16 +408,22 @@
         <h3>config.yaml</h3>
         <p class="upload-desc">解析 workdir 与 inputs 路径，与本地 md_xhs 目录结构一致</p>
         <div class="file-input-wrapper">
-          <input type="file" id="interaction-config" accept=".yaml,.yml">
-          <span class="file-name">解析 workdir 与 inputs 路径</span>
+          <div class="file-input-zone">
+            <span class="file-input-btn">选取文件</span>
+            <span class="file-name file-name-hint">解析 workdir 与 inputs 路径</span>
+            <input type="file" id="interaction-config" accept=".yaml,.yml" class="file-input-native">
+          </div>
         </div>
       </div>
       <div class="interaction-upload-panel">
         <h3>数据包 zip</h3>
         <p class="upload-desc">含 tpr / xtc / ndx / top / pdb 等轨迹文件</p>
         <div class="file-input-wrapper">
-          <input type="file" id="interaction-zip" accept=".zip,.tar.gz,.tgz">
-          <span class="file-name">含 tpr / xtc / ndx / top / pdb</span>
+          <div class="file-input-zone">
+            <span class="file-input-btn">选取文件</span>
+            <span class="file-name file-name-hint">含 tpr / xtc / ndx / top / pdb</span>
+            <input type="file" id="interaction-zip" accept=".zip,.tar.gz,.tgz" class="file-input-native">
+          </div>
         </div>
         <ul class="interaction-file-list">
           <li><span class="fname">md.tpr</span><span class="fstatus ok">已识别</span></li>
