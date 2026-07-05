@@ -23,7 +23,12 @@ DEFAULT_PARAMS = {
 WATER_MODEL = "tip3p"
 PROTEIN_FF = "amber14sb"
 
-# 付费下载：收款码图片 frontend/assets/images/pay.jpg
+# 付费下载（默认关闭，设 WEBMD_PAYMENT_ENABLED=1 开启）
+PAYMENT_ENABLED = os.environ.get("WEBMD_PAYMENT_ENABLED", "0").strip().lower() in ("1", "true", "yes")
 PAYMENT_AMOUNT = 30.0
 PAYMENT_QR_URL = "/assets/images/pay.jpg"
 PAYMENT_CURRENCY = "CNY"
+
+# 自愿打赏（默认开启；付费下载开启时自动隐藏打赏）
+TIP_ENABLED = os.environ.get("WEBMD_TIP_ENABLED", "1").strip().lower() not in ("0", "false", "no")
+TIP_QR_URL = PAYMENT_QR_URL

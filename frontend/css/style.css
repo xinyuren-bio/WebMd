@@ -941,6 +941,85 @@ body.workspace-analysis #app {
   gap: 10px;
 }
 
+/* ---- 自愿打赏 ---- */
+.tip-section {
+  width: 100%;
+  margin-top: 8px;
+  padding: 18px 20px;
+  background: linear-gradient(135deg, #fffbf5 0%, #fff8ec 100%);
+  border: 1px solid #f0e0c8;
+  border-radius: var(--radius-md);
+}
+
+.tip-section.hidden {
+  display: none !important;
+}
+
+.tip-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.tip-icon {
+  font-size: 1.75rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.tip-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 0 0 4px;
+}
+
+.tip-desc {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.tip-hint {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  margin: 0 0 12px;
+}
+
+.tip-qr-wrap {
+  display: inline-flex;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+}
+
+.tip-qr-wrap img {
+  width: 140px;
+  height: 140px;
+  object-fit: contain;
+  display: block;
+}
+
+.tip-note {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.tip-note code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--color-primary);
+  background: rgba(255, 255, 255, 0.8);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
 .payment-modal {
   position: fixed;
   inset: 0;
@@ -994,10 +1073,54 @@ body.workspace-analysis #app {
 }
 
 .payment-amount {
-  font-size: 2rem;
+  font-size: 1.75rem;
   font-weight: 800;
   color: var(--color-primary);
-  margin-bottom: 16px;
+  margin-bottom: 6px;
+}
+
+.payment-amount-hint {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+.payment-payer-note-label {
+  display: block;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}
+
+.payment-payer-note {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  margin-bottom: 12px;
+}
+
+.payment-pending-box {
+  background: #fff8e6;
+  border: 1px solid #f0d78c;
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+
+.payment-pending-title {
+  font-weight: 700;
+  color: #b8860b;
+  margin-bottom: 4px;
+}
+
+.payment-pending-text {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+  margin: 0;
 }
 
 .payment-qr-wrap {

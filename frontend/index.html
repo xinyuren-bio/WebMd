@@ -358,9 +358,24 @@
       </div>
     </div>
     <div class="download-actions">
-      <button type="button" id="btn-pay-download" class="btn btn-primary">支付宝支付 ¥30 后下载</button>
+      <button type="button" id="btn-pay-download" class="btn btn-primary hidden">支付宝支付 ¥30 后下载</button>
       <a id="btn-download" class="btn btn-success hidden" href="#" download>下载模拟文件包 (tar.gz)</a>
-      <p class="hint" id="download-hint">扫码支付 ¥30 并确认后，即可下载结果包</p>
+      <p class="hint" id="download-hint">任务完成后即可下载结果包</p>
+
+      <div id="tip-section" class="tip-section hidden">
+        <div class="tip-header">
+          <span class="tip-icon" aria-hidden="true">☕</span>
+          <div>
+            <h3 class="tip-title">觉得有帮助？欢迎自愿打赏</h3>
+            <p class="tip-desc">打赏完全自愿，不影响下载。您的支持是我们持续维护的动力。</p>
+          </div>
+        </div>
+        <p class="tip-hint">支付宝扫码，金额随意</p>
+        <div class="tip-qr-wrap">
+          <img id="tip-qr" src="/assets/images/pay.jpg" alt="支付宝打赏码">
+        </div>
+        <p class="tip-note">备注可填任务 ID 以便致谢：<code id="tip-task-id"></code></p>
+      </div>
     </div>
   </section>
 
@@ -369,13 +384,20 @@
     <div class="payment-modal-panel">
       <button type="button" class="payment-modal-close" id="payment-modal-close" aria-label="关闭">×</button>
       <h3 id="payment-modal-title">支付宝扫码支付</h3>
-      <p class="payment-amount">¥<span id="payment-amount">30</span></p>
+      <p class="payment-amount">请支付 <strong>¥<span id="payment-amount">30</span></strong></p>
+      <p class="payment-amount-hint">每单金额含唯一尾数（¥30.01–30.99），便于核对到账，请勿四舍五入</p>
       <div class="payment-qr-wrap">
         <img id="payment-qr" src="/assets/images/pay.jpg" alt="支付宝收款码">
       </div>
-      <p class="payment-note">请使用支付宝扫描上方二维码完成支付</p>
+      <p class="payment-note">请使用支付宝扫描上方二维码，按上方<strong>精确金额</strong>转账</p>
       <p class="payment-task-id">转账备注请填写任务 ID：<code id="payment-task-id"></code></p>
-      <div class="payment-modal-actions">
+      <label class="payment-payer-note-label" for="payment-payer-note">付款人备注（选填，如支付宝昵称）</label>
+      <input type="text" id="payment-payer-note" class="payment-payer-note" maxlength="120" placeholder="便于管理员核对时可填写">
+      <div id="payment-pending-box" class="payment-pending-box hidden">
+        <p class="payment-pending-title">已提交，等待核实</p>
+        <p class="payment-pending-text">我们正核对您的转账记录，通常数分钟内完成。核实通过后将自动解锁下载。</p>
+      </div>
+      <div class="payment-modal-actions" id="payment-modal-actions">
         <button type="button" class="btn btn-primary" id="payment-confirm">我已完成支付</button>
         <button type="button" class="btn btn-secondary" id="payment-cancel">取消</button>
       </div>

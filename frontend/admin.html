@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>支付核实 · WebMD 管理</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .admin-page { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+    .admin-page h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .admin-key-row { display: flex; gap: 0.5rem; margin: 1rem 0 1.5rem; flex-wrap: wrap; }
+    .admin-key-row input { flex: 1; min-width: 200px; padding: 0.5rem 0.75rem; border: 1px solid #ccc; border-radius: 6px; }
+    .admin-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .admin-table th, .admin-table td { border: 1px solid #e0e0e0; padding: 0.6rem 0.75rem; text-align: left; }
+    .admin-table th { background: #f5f7fa; }
+    .admin-empty { color: #666; padding: 2rem 0; text-align: center; }
+    .admin-msg { margin-top: 1rem; color: #c0392b; }
+    .admin-msg.ok { color: #27ae60; }
+  </style>
+</head>
+<body>
+  <div class="admin-page">
+    <h1>支付核实</h1>
+    <p class="hint">核对支付宝到账记录后，批准对应任务下载。密钥通过服务器环境变量 <code>WEBMD_ADMIN_KEY</code> 配置。</p>
+    <div class="admin-key-row">
+      <input type="password" id="admin-key" placeholder="管理员密钥" autocomplete="off">
+      <button type="button" class="btn btn-primary" id="btn-load">刷新待核实列表</button>
+    </div>
+    <div id="admin-content">
+      <p class="admin-empty">请输入密钥并刷新列表</p>
+    </div>
+    <p class="admin-msg hidden" id="admin-msg"></p>
+  </div>
+  <script src="/js/admin.js"></script>
+</body>
+</html>

@@ -6,7 +6,12 @@ from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
-from config import TASKS_DIR, DEFAULT_PARAMS, PAYMENT_AMOUNT, PAYMENT_QR_URL, PAYMENT_CURRENCY
+from config import (
+    TASKS_DIR, DEFAULT_PARAMS,
+    PAYMENT_ENABLED, PAYMENT_AMOUNT, PAYMENT_QR_URL, PAYMENT_CURRENCY,
+    TIP_ENABLED, TIP_QR_URL,
+)
+from payment_util import calc_payment_amount, verify_admin_key
 from models import Task, TaskStatus, tasks
 from engine.pipeline import run_pipeline
 from engine.structure_export import ensure_complex_pdb
@@ -126,13 +131,37 @@ async def get_task(task_id: str):
     return task.to_dict()
 
 
+def _payment_payload(task: Task) -> dict:
+    """组装任务支付信息。"""
+    amount = task.payment_amount or calc_payment_amount(task.task_id, PAYMENT_AMOUNT)
+    if task.payment_amount is None:
+        task.payment_amount = amount
+        task.save()
+    return {
+        "task_id": task.task_id,
+        "paid": task.paid,
+        "paid_at": task.paid_at,
+        "payment_status": task.payment_status,
+        "payment_amount": amount,
+        "payment_claimed_at": task.payment_claimed_at,
+        "amount": amount,
+        "currency": PAYMENT_CURRENCY,
+        "qr_url": PAYMENT_QR_URL,
+    }
+
+
 @router.get("/payment/config")
 async def get_payment_config():
-    """返回付费下载配置（金额与收款码）。"""
+    """返回付费/打赏配置。"""
+    tip_on = TIP_ENABLED and not PAYMENT_ENABLED
     return {
+        "enabled": PAYMENT_ENABLED,
+        "tip_enabled": tip_on,
         "amount": PAYMENT_AMOUNT,
         "currency": PAYMENT_CURRENCY,
         "qr_url": PAYMENT_QR_URL,
+        "tip_qr_url": TIP_QR_URL,
+        "verify_mode": "manual",
     }
 
 
@@ -141,32 +170,76 @@ async def get_task_payment(task_id: str):
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    return {
-        "task_id": task_id,
-        "paid": task.paid,
-        "paid_at": task.paid_at,
-        "amount": PAYMENT_AMOUNT,
-        "currency": PAYMENT_CURRENCY,
-        "qr_url": PAYMENT_QR_URL,
-    }
+    return _payment_payload(task)
 
 
 @router.post("/tasks/{task_id}/payment/confirm")
-async def confirm_task_payment(task_id: str):
-    """用户扫码支付后确认，解锁下载。"""
+async def confirm_task_payment(
+    task_id: str,
+    payer_note: str = Form(default=""),
+):
+    """用户声明已支付，进入待核实状态（需管理员确认后才可下载）。"""
+    if not PAYMENT_ENABLED:
+        raise HTTPException(status_code=403, detail="付费下载功能未开启")
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     if task.status != TaskStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="任务尚未完成，暂不可支付下载")
-    if task.paid:
-        return {"task_id": task_id, "paid": True, "paid_at": task.paid_at}
+    if task.paid or task.payment_status == "paid":
+        return _payment_payload(task)
+    if task.payment_status == "pending":
+        return _payment_payload(task)
+
+    task.payment_amount = calc_payment_amount(task.task_id, PAYMENT_AMOUNT)
+    task.payment_status = "pending"
+    task.payment_claimed_at = time.time()
+    task.payment_note = (payer_note or "").strip()[:120]
+    task.save()
+    logger.info("任务 %s 支付待核实，金额 ¥%.2f", task_id, task.payment_amount)
+    return _payment_payload(task)
+
+
+@router.get("/admin/payments/pending")
+async def list_pending_payments(admin_key: str = ""):
+    """管理员：列出待核实的支付。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+
+    pending = []
+    for t in tasks.values():
+        if t.payment_status == "pending":
+            pending.append({
+                "task_id": t.task_id,
+                "payment_amount": t.payment_amount or calc_payment_amount(t.task_id, PAYMENT_AMOUNT),
+                "payment_claimed_at": t.payment_claimed_at,
+                "payment_note": t.payment_note,
+                "created_at": t.created_at,
+            })
+    pending.sort(key=lambda x: x.get("payment_claimed_at") or 0, reverse=True)
+    return {"items": pending}
+
+
+@router.post("/admin/payments/{task_id}/approve")
+async def approve_task_payment(task_id: str, admin_key: str = ""):
+    """管理员：核实到账后批准下载。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.status != TaskStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="任务尚未完成")
 
     task.paid = True
     task.paid_at = time.time()
+    task.payment_status = "paid"
+    if not task.payment_amount:
+        task.payment_amount = calc_payment_amount(task.task_id, PAYMENT_AMOUNT)
     task.save()
-    logger.info("任务 %s 已确认支付", task_id)
-    return {"task_id": task_id, "paid": True, "paid_at": task.paid_at}
+    logger.info("任务 %s 支付已核实通过", task_id)
+    return _payment_payload(task)
 
 
 @router.get("/tasks/{task_id}/download")
@@ -176,8 +249,8 @@ async def download_task(task_id: str):
         raise HTTPException(status_code=404, detail="任务不存在")
     if task.status != TaskStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="任务尚未完成")
-    if not task.paid:
-        raise HTTPException(status_code=402, detail="请先完成支付后再下载")
+    if PAYMENT_ENABLED and (not task.paid or task.payment_status != "paid"):
+        raise HTTPException(status_code=402, detail="支付核实中或尚未支付，暂不可下载")
     if not task.output_file or not Path(task.output_file).exists():
         raise HTTPException(status_code=400, detail="输出文件不存在")
 

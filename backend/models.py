@@ -50,6 +50,10 @@ class Task:
     created_at: float = field(default_factory=time.time)
     paid: bool = False
     paid_at: float | None = None
+    payment_status: str = "unpaid"  # unpaid | pending | paid
+    payment_amount: float | None = None
+    payment_claimed_at: float | None = None
+    payment_note: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -62,6 +66,9 @@ class Task:
             "created_at": self.created_at,
             "paid": self.paid,
             "paid_at": self.paid_at,
+            "payment_status": self.payment_status,
+            "payment_amount": self.payment_amount,
+            "payment_claimed_at": self.payment_claimed_at,
         }
 
     def save(self) -> None:
@@ -80,6 +87,10 @@ class Task:
             "created_at": self.created_at,
             "paid": self.paid,
             "paid_at": self.paid_at,
+            "payment_status": self.payment_status,
+            "payment_amount": self.payment_amount,
+            "payment_claimed_at": self.payment_claimed_at,
+            "payment_note": self.payment_note,
         }
         meta.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -99,6 +110,10 @@ class Task:
                 created_at=data.get("created_at", time.time()),
                 paid=data.get("paid", False),
                 paid_at=data.get("paid_at"),
+                payment_status=data.get("payment_status", "paid" if data.get("paid") else "unpaid"),
+                payment_amount=data.get("payment_amount"),
+                payment_claimed_at=data.get("payment_claimed_at"),
+                payment_note=data.get("payment_note", ""),
             )
             return task
         except (json.JSONDecodeError, KeyError, ValueError) as e:
