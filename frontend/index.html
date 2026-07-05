@@ -4,14 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css">
-<link rel="stylesheet" href="/css/interaction.css">
+<link rel="stylesheet" href="/css/style.css?v=20260705">
+<link rel="stylesheet" href="/css/interaction.css?v=20260705">
+<link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
 <body class="app-shell workspace-intro">
 
 <header class="site-header">
   <div class="site-header-inner">
-    <a class="site-brand" href="/" id="site-brand-home">WebMD</a>
+    <a class="site-brand" href="/" id="site-brand-home">
+      <img src="/assets/images/logo.png" alt="" class="site-brand-logo" width="32" height="32">
+      WebMD
+    </a>
     <nav class="site-nav" aria-label="主功能">
       <button type="button" class="site-nav-link workspace-nav" data-workspace="prepare">体系准备</button>
       <button type="button" class="site-nav-link workspace-nav" data-workspace="analysis">轨迹分析</button>
@@ -105,7 +109,7 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M4 18V6M8 18V10M12 18V4M16 18V12M20 18V8" stroke="currentColor" stroke-width="1.5"/></svg>
           </div>
           <h3>5. 轨迹分析</h3>
-          <p>上传 xtc/tpr 数据，一键运行 RMSD、氢键、RMSF、接触热图与自由能景观分析。</p>
+          <p>上传 xtc/tpr 数据，运行 RMSD、Rg、RMSF、Contact map、氢键与自由能景观图分析。</p>
         </article>
       </div>
     </div>
@@ -125,7 +129,7 @@
         </article>
         <article class="landing-app-card">
           <h3>构象采样研究</h3>
-          <p>PCA 与自由能景观（FEL）分析，探索配体结合的多构象状态与能量分布。</p>
+          <p>自由能景观图分析，探索配体结合的多构象状态与能量分布。</p>
         </article>
         <article class="landing-app-card">
           <h3>模拟文件一键生成</h3>
@@ -156,11 +160,11 @@
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M4 18V8M9 18V4M14 18V12M19 18V6" stroke="currentColor" stroke-width="1.5"/></svg>
           </div>
           <h2>轨迹分析</h2>
-          <p class="portal-desc">上传 MD 轨迹，运行 RMSD、氢键、接触、自由能景观等分析模块</p>
+          <p class="portal-desc">上传 MD 轨迹，运行 RMSD、Rg、RMSF、Contact map、氢键与自由能景观图</p>
           <ul class="portal-features">
-            <li>RMSD / Rg / RMSF</li>
-            <li>氢键时间线与接触热图</li>
-            <li>PCA + 自由能景观 FEL</li>
+            <li>RMSD · 回转半径 Rg · RMSF</li>
+            <li>Contact map · 氢键</li>
+            <li>自由能景观图</li>
           </ul>
           <span class="portal-cta">进入轨迹分析 →</span>
         </button>
@@ -178,7 +182,10 @@
         <button type="button" data-go="prepare">体系准备</button>
         <button type="button" data-go="analysis">轨迹分析</button>
       </div>
-      <p class="footer-copy">Amber ff14SB · GAFF2 · TIP3P · GROMACS</p>
+      <div class="footer-copy">
+        <p class="footer-tagline">从体系搭建到轨迹分析 · 助力蛋白-配体分子动力学研究</p>
+        <p class="footer-copyright">© 2026 WebMD · 保留所有权利</p>
+      </div>
     </div>
   </footer>
 
@@ -458,66 +465,54 @@
       </div>
       <div class="interaction-select-row">
         <button type="button" id="interaction-select-all">全选</button>
-        <button type="button" id="interaction-select-core">仅核心（RMSD + 氢键 + 接触）</button>
+        <button type="button" id="interaction-select-core">仅基础（RMSD + Rg + RMSF + Contact + 氢键）</button>
         <button type="button" id="interaction-select-none">清空</button>
       </div>
       <div class="interaction-module-grid">
         <label class="interaction-module-card selected" data-core="1">
           <input type="checkbox" checked data-step="gmx_rms">
           <div class="mod-title">RMSD</div>
-          <div class="mod-desc">gmx rms · Backbone / Protein / Ligand / Complex</div>
+          <div class="mod-desc">骨架 / 蛋白 / 配体 / 复合物均方根偏差</div>
           <span class="mod-tag core">稳定性</span>
         </label>
         <label class="interaction-module-card selected" data-core="1">
           <input type="checkbox" checked data-step="gmx_gyrate">
           <div class="mod-title">回转半径 Rg</div>
-          <div class="mod-desc">gmx gyrate · 蛋白-配体紧凑度</div>
+          <div class="mod-desc">蛋白-配体复合物紧凑度随时间变化</div>
           <span class="mod-tag core">稳定性</span>
         </label>
         <label class="interaction-module-card selected" data-core="1">
-          <input type="checkbox" checked data-step="analysis_py">
-          <div class="mod-title">RMSF &amp; 接触</div>
-          <div class="mod-desc">MDAnalysis · 残基波动 + 接触热图/频率</div>
+          <input type="checkbox" checked data-step="rmsf_py">
+          <div class="mod-title">RMSF</div>
+          <div class="mod-desc">残基均方根波动，识别柔性区域</div>
+          <span class="mod-tag core">波动</span>
+        </label>
+        <label class="interaction-module-card selected" data-core="1">
+          <input type="checkbox" checked data-step="contact_py">
+          <div class="mod-title">Contact map</div>
+          <div class="mod-desc">蛋白-配体接触热图与接触频率</div>
           <span class="mod-tag core">相互作用</span>
         </label>
         <label class="interaction-module-card selected" data-core="1">
           <input type="checkbox" checked data-step="hbond_py">
-          <div class="mod-title">氢键时间线</div>
-          <div class="mod-desc">蛋白-配体 H 键热图 + 逐帧 CSV</div>
+          <div class="mod-title">氢键</div>
+          <div class="mod-desc">蛋白-配体氢键时间线与 occupancy</div>
           <span class="mod-tag core">相互作用</span>
         </label>
         <label class="interaction-module-card selected">
-          <input type="checkbox" checked data-step="pca_combine">
-          <div class="mod-title">PCA 合并</div>
-          <div class="mod-desc">RMSD + Rg → output.xvg</div>
-          <span class="mod-tag">FEL 前置</span>
-        </label>
-        <label class="interaction-module-card selected">
-          <input type="checkbox" checked data-step="gmx_sham">
-          <div class="mod-title">gmx sham</div>
-          <div class="mod-desc">自由能 SHAM · gibbs.xpm</div>
-          <span class="mod-tag">FEL 前置</span>
-        </label>
-        <label class="interaction-module-card selected">
           <input type="checkbox" checked data-step="fel_py">
-          <div class="mod-title">自由能景观 FEL</div>
-          <div class="mod-desc">2D / 3D 自由能面图</div>
-          <span class="mod-tag">高级</span>
-        </label>
-        <label class="interaction-module-card">
-          <input type="checkbox" data-step="update_sim_docs">
-          <div class="mod-title">模拟说明文档</div>
-          <div class="mod-desc">从 topol.top 提取力场体系说明</div>
-          <span class="mod-tag">文档</span>
+          <div class="mod-title">自由能景观图</div>
+          <div class="mod-desc">2D / 3D 自由能面（FEL）</div>
+          <span class="mod-tag">构象</span>
         </label>
       </div>
     </div>
 
     <details class="interaction-advanced">
-      <summary>高级参数（对应 config.yaml 中的 analysis_py / hbond_py / gmx_groups）</summary>
+      <summary>高级参数</summary>
       <div class="interaction-param-groups">
         <div class="interaction-param-group">
-          <h4>analysis_py</h4>
+          <h4>RMSF / Contact map</h4>
           <div class="form-row">
             <div class="form-group">
               <label>配体 resname</label>
@@ -534,7 +529,7 @@
           </div>
         </div>
         <div class="interaction-param-group">
-          <h4>hbond_py</h4>
+          <h4>氢键</h4>
           <div class="form-row">
             <div class="form-group">
               <label>D-A 距离 (Å)</label>

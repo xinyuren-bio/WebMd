@@ -1,24 +1,15 @@
 (function () {
   "use strict";
 
-  // 样式预览：Tab 切换 + 分析模块勾选交互（无后端）
+  // 分析模块勾选：使用 label 原生关联，仅用 change 同步选中样式
   var moduleCards = document.querySelectorAll(".interaction-module-card");
   moduleCards.forEach(function (card) {
-    card.addEventListener("click", function (e) {
-      if (e.target.tagName === "INPUT") return;
-      var cb = card.querySelector('input[type="checkbox"]');
-      if (cb) {
-        cb.checked = !cb.checked;
-        card.classList.toggle("selected", cb.checked);
-      }
-    });
     var cb = card.querySelector('input[type="checkbox"]');
-    if (cb) {
-      cb.addEventListener("change", function () {
-        card.classList.toggle("selected", cb.checked);
-      });
+    if (!cb) return;
+    cb.addEventListener("change", function () {
       card.classList.toggle("selected", cb.checked);
-    }
+    });
+    card.classList.toggle("selected", cb.checked);
   });
 
   var btnAll = document.getElementById("interaction-select-all");

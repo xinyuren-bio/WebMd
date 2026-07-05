@@ -175,8 +175,20 @@
 
 .interaction-module-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .interaction-module-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .interaction-module-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .interaction-module-card {
@@ -210,7 +222,6 @@
   height: 18px;
   accent-color: #6366f1;
   cursor: pointer;
-  pointer-events: none;
 }
 
 .interaction-module-card .mod-title {

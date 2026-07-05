@@ -109,13 +109,17 @@ body.workspace-intro .site-nav-link.active {
   letter-spacing: -0.02em;
 }
 
-.site-brand::before {
-  content: "";
-  display: block;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--color-primary) 0%, #0891b2 100%);
+.site-brand::before,
+.site-brand::after {
+  content: none !important;
+  display: none !important;
+}
+
+.site-brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
   flex-shrink: 0;
 }
 
@@ -525,11 +529,20 @@ body.workspace-analysis .site-nav-link[data-workspace="analysis"].active {
 .footer-copy {
   width: 100%;
   text-align: center;
-  font-size: 0.75rem;
-  color: rgba(255,255,255,0.4);
   margin-top: 8px;
   padding-top: 16px;
   border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.footer-tagline {
+  font-size: 0.8125rem;
+  color: rgba(255,255,255,0.55);
+  margin-bottom: 6px;
+}
+
+.footer-copyright {
+  font-size: 0.75rem;
+  color: rgba(255,255,255,0.35);
 }
 
 @media (max-width: 1024px) {
