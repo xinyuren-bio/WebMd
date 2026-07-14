@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260714c">
+<link rel="stylesheet" href="/css/style.css?v=20260714d">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -911,7 +911,42 @@
   </div>
 </div>
 
+<div id="sim-notice-modal" class="payment-modal sim-notice-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sim-notice-title">
+  <div class="payment-modal-backdrop" id="sim-notice-backdrop"></div>
+  <div class="payment-modal-panel sim-notice-panel">
+    <button type="button" class="payment-modal-close" id="sim-notice-close" aria-label="关闭">×</button>
+    <p class="sim-notice-eyebrow">使用须知</p>
+    <h3 id="sim-notice-title">如何选择模拟时长？</h3>
+    <p class="sim-notice-lead">各档位流程相同，差别主要在采样时长与适用场景。建议按需求分步投入。</p>
+    <div class="sim-notice-tiers">
+      <article class="sim-notice-tier">
+        <header>
+          <strong>10 ns</strong>
+          <span class="sim-notice-price">¥10</span>
+        </header>
+        <p>短时预模拟，低成本试手。用于检查体系能否正常启动、结构是否稳定，并确认整套流程跑得通；适合正式长程模拟前的快速排查。</p>
+      </article>
+      <article class="sim-notice-tier sim-notice-tier-main">
+        <header>
+          <strong>100 ns</strong>
+          <span class="sim-notice-price">¥66</span>
+        </header>
+        <p>标准正式模拟。可产出 RMSD、氢键、自由能景观等全套分析数据，满足正式实验与论文写作需要。</p>
+      </article>
+    </div>
+    <p class="sim-notice-tip">建议先跑 <strong>10 ns</strong> 排查体系问题，再升级至 <strong>100 ns</strong>，避免一次性长投后才发现准备阶段有坑。</p>
+    <label class="sim-notice-dismiss-label" for="sim-notice-dismiss">
+      <input type="checkbox" id="sim-notice-dismiss">
+      <span>不再自动弹出此须知</span>
+    </label>
+    <div class="payment-modal-actions">
+      <button type="button" class="btn btn-primary" id="sim-notice-ok">我知道了</button>
+    </div>
+  </div>
+</div>
+
 <script src="/js/analytics.js"></script>
+<script src="/js/sim_notice.js?v=20260714"></script>
 <script src="/js/auth.js"></script>
 <script src="/js/main_tabs.js?v=20260714"></script>
 <script src="/js/ngl.js"></script>
