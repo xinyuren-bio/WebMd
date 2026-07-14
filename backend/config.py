@@ -41,11 +41,15 @@ DEFAULT_PARAMS = {
     "npt_time_ps": 50.0,          # NPT 平衡时长 (ps)
     "box_padding": 10.0,          # 溶剂盒子边距 (Å)
     "ion_conc": 0.15,             # 离子浓度 (mol/L)
+    "salt_type": "nacl",          # 背景盐种类：nacl / kcl
     "ligand_add_hydrogens": True, # 配体 antechamber 前自动补氢
 }
 
 # 允许的 MD 模拟时长（ns），与定价档位一致
 ALLOWED_SIM_NS = (10.0, 100.0, 200.0)
+
+# 允许的背景盐种类（中和阳离子与背景盐阳离子一致）
+ALLOWED_SALT_TYPES = ("nacl", "kcl")
 
 WATER_MODEL = "tip3p"
 PROTEIN_FF = "amber14sb"

@@ -110,6 +110,9 @@
       timestep: parseFloat(document.getElementById("timestep").value) / 1000,
       simulation_time_ns: parseFloat(document.getElementById("sim-time").value),
       ion_conc: parseFloat(document.getElementById("ion-conc").value),
+      salt_type: document.getElementById("salt-type")
+        ? document.getElementById("salt-type").value
+        : "nacl",
       constraints: document.getElementById("constraints").value,
       nonbonded_cutoff: parseFloat(document.getElementById("nonbonded-cutoff").value),
       box_padding: parseFloat(document.getElementById("box-padding").value),

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from config import (
     TASKS_DIR, DEFAULT_PARAMS, MD_MAX_NS, SITE_BASE_URL, ALLOWED_SIM_NS,
+    ALLOWED_SALT_TYPES,
     PAYMENT_ENABLED, PAYMENT_AMOUNT, PAYMENT_QR_URL, WECHAT_QR_URL, PAYMENT_CURRENCY,
     TIP_ENABLED, TIP_QR_URL, ANALYTICS_FILE, AUTODL_MARKET_URL, MD_CALLBACK_SECRET,
 )
@@ -138,6 +139,7 @@ async def create_task(
     nonbonded_cutoff: float = Form(default=DEFAULT_PARAMS["nonbonded_cutoff"]),
     box_padding: float = Form(default=DEFAULT_PARAMS["box_padding"]),
     ion_conc: float = Form(default=DEFAULT_PARAMS["ion_conc"]),
+    salt_type: str = Form(default=DEFAULT_PARAMS["salt_type"]),
     tau_t: float = Form(default=DEFAULT_PARAMS["tau_t"]),
     tau_p: float = Form(default=DEFAULT_PARAMS["tau_p"]),
     report_interval_ps: float = Form(default=DEFAULT_PARAMS["report_interval_ps"]),
@@ -149,6 +151,10 @@ async def create_task(
 
     if simulation_time_ns > MD_MAX_NS:
         raise HTTPException(status_code=400, detail=f"模拟时长不能超过 {MD_MAX_NS} ns")
+
+    salt_key = (salt_type or "nacl").strip().lower()
+    if salt_key not in ALLOWED_SALT_TYPES:
+        raise HTTPException(status_code=400, detail="盐种类仅支持 NaCl 或 KCl")
 
     # 配体补氢开关：表单 "1"/"true"/"on" 为开启（默认开）
     add_h = ligand_add_hydrogens.strip().lower() not in ("0", "false", "no", "off")
@@ -194,6 +200,7 @@ async def create_task(
         "nonbonded_cutoff": nonbonded_cutoff,
         "box_padding": box_padding,
         "ion_conc": ion_conc,
+        "salt_type": salt_key,
         "tau_t": tau_t,
         "tau_p": tau_p,
         "report_interval_ps": report_interval_ps,

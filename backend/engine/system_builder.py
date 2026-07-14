@@ -111,6 +111,12 @@ def _fix_terminal_atoms_for_tleap(lines: list[str]) -> list[str]:
         out.append(line)
     return out
 
+# 盐种类 → Amber 阳离子残基名（阴离子均为 Cl-）
+_SALT_CATION = {
+    "nacl": "Na+",
+    "kcl": "K+",
+}
+
 TLEAP_TEMPLATE_BASE = """\
 source leaprc.protein.ff14SB
 source leaprc.gaff2
@@ -123,11 +129,20 @@ prot = loadpdb {protein_pdb}
 complex = combine {{ prot {ligand_vars} }}
 solvatebox complex TIP3PBOX {box_padding}
 addions complex Cl- 0
-addions complex Na+ 0
+addions complex {cation} 0
 {salt_line}
 saveamberparm complex {prmtop} {inpcrd}
 quit
 """
+
+
+def _normalize_salt_type(salt_type: str) -> str:
+    """规范化盐种类为 nacl/kcl；未知值回退 nacl。"""
+    key = (salt_type or "nacl").strip().lower()
+    if key not in _SALT_CATION:
+        logger.warning("未知盐种类 %s，回退为 NaCl", salt_type)
+        return "nacl"
+    return key
 
 
 def _read_coords_pdb(p: str) -> list[tuple[float, float, float]]:
@@ -190,7 +205,7 @@ def _estimate_box_volume_A3(
 
 
 def _ion_pairs_from_conc(c: float, vol_A3: float) -> int:
-    """由摩尔浓度和体积估算 NaCl 离子对数（teLeap addIonsRand 需整数）。"""
+    """由摩尔浓度和体积估算一价盐离子对数（teLeap addIonsRand 需整数）。"""
     if c <= 0 or vol_A3 <= 0:
         return 0
     # 1 Å³ = 10⁻²⁷ L
@@ -207,23 +222,27 @@ def _make_tleap_script(
     inpcrd: str,
     protein_pdb_path: str = "",
     gaff_mol2_paths: list[str] | None = None,
+    salt_type: str = "nacl",
 ) -> str:
-    """生成 tleap 输入脚本（支持 1~3 个配体）。
+    """生成 tleap 输入脚本（支持 1~3 个配体与 NaCl/KCl）。
 
     ligands 每项需含 leap_var、gaff_mol2、frcmod（相对 work_dir 的文件名）。
     """
+    salt = _normalize_salt_type(salt_type)
+    cation = _SALT_CATION[salt]
+
     n_ions = 0
     gaff_paths = gaff_mol2_paths or [lg.get("gaff_mol2_path", "") for lg in ligands]
     if ion_conc > 0 and protein_pdb_path and gaff_paths:
         vol = _estimate_box_volume_A3_coords(protein_pdb_path, gaff_paths, box_padding)
         n_ions = _ion_pairs_from_conc(ion_conc, vol)
         logger.info(
-            "离子对估算: 浓度=%.3f M, 体积≈%.0f Å³ → %d 对 Na+/Cl-",
-            ion_conc, vol, n_ions,
+            "离子对估算: 盐=%s, 浓度=%.3f M, 体积≈%.0f Å³ → %d 对 %s/Cl-",
+            salt.upper(), ion_conc, vol, n_ions, cation,
         )
 
     if n_ions > 0:
-        salt_line = f"addionsrand complex Na+ {n_ions} Cl- {n_ions}"
+        salt_line = f"addionsrand complex {cation} {n_ions} Cl- {n_ions}"
     else:
         salt_line = "# 跳过加盐（浓度为 0 或估算离子数为 0）"
 
@@ -242,6 +261,7 @@ def _make_tleap_script(
         ligand_param_lines="\n".join(param_lines),
         ligand_vars=" ".join(var_names),
         box_padding=box_padding,
+        cation=cation,
         salt_line=salt_line,
         prmtop=prmtop,
         inpcrd=inpcrd,
@@ -284,10 +304,12 @@ def build_full_system(
     work_dir: str,
     box_padding: float = 10.0,
     ion_conc: float = 0.15,
+    salt_type: str = "nacl",
     ligand_specs: list[dict] | None = None,
 ) -> tuple[str, str]:
     """tleap 构建溶剂化 Amber 体系，返回 (prmtop, inpcrd) 路径。
 
+    salt_type: nacl 或 kcl；中和与背景盐阳离子一致。
     ligand_specs 可选，格式 [{gaff_mol2, frcmod, resname}]；未传时使用单配体参数。
     """
     if ligand_specs:
@@ -337,6 +359,7 @@ def build_full_system(
         inpcrd=inpcrd.name,
         protein_pdb_path=str(clean_pdb),
         gaff_mol2_paths=gaff_abs,
+        salt_type=salt_type,
     ), encoding="utf-8")
 
     logger.info("tleap 输入脚本:\n%s", tleap_in.read_text(encoding="utf-8"))

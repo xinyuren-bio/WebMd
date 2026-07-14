@@ -326,6 +326,13 @@
         <input type="number" id="timestep" value="2" min="0.1" step="0.1">
       </div>
       <div class="form-group">
+        <label for="salt-type">盐种类</label>
+        <select id="salt-type">
+          <option value="nacl" selected>NaCl</option>
+          <option value="kcl">KCl</option>
+        </select>
+      </div>
+      <div class="form-group">
         <label for="ion-conc">离子浓度 (M)</label>
         <input type="number" id="ion-conc" value="0.15" min="0" step="0.01">
       </div>
@@ -636,7 +643,8 @@
           <tr><td>温度 (K)</td><td>NVT / NPT 控温目标</td><td>298.15</td></tr>
           <tr><td>压强 (bar)</td><td>NPT 控压目标</td><td>1.0</td></tr>
           <tr><td>时间步长 (fs)</td><td>积分步长</td><td>2</td></tr>
-          <tr><td>离子浓度 (M)</td><td>中性化并加盐浓度</td><td>0.15</td></tr>
+          <tr><td>盐种类</td><td>背景盐与中和阳离子，可选 NaCl 或 KCl</td><td>NaCl</td></tr>
+          <tr><td>离子浓度 (M)</td><td>中性化后按该浓度加盐</td><td>0.15</td></tr>
         </tbody>
       </table>
     </div>
