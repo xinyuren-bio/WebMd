@@ -5,7 +5,6 @@
   var currentComp = null;
   var ligandComp = null;
   var ligandComps = [];
-  var LIGAND_COLORS = ["#e11d48", "#2563eb", "#ca8a04"];
   var isLocalPreview = false;
   var debugLines = [];
 
@@ -463,22 +462,10 @@
       }
     }
 
-    // 配体按元素着色；多配体时仅碳原子用不同底色区分（O/N/S 等仍走元素色）
-    function ligColorScheme(carbonHex) {
-      if (window.NGL && NGL.ColormakerRegistry) {
-        return NGL.ColormakerRegistry.addScheme(function () {
-          this.atomColor = function (atom) {
-            return bakerLigandColor(atom, carbonHex);
-          };
-        }, "dual-ligand-element");
-      }
-      return "element";
-    }
-
-    function addLig(comp, color, label) {
+    // 配体按 NGL 内置元素色（CPK）；color 与 colorScheme 同时写，兼容不同 NGL 参数名
+    function addLig(comp, label) {
       try {
-        var schemeId = ligColorScheme(color);
-        var base = { sele: "all", colorScheme: schemeId };
+        var base = { sele: "all", color: "element", colorScheme: "element" };
         if (style === "baker-overall" || style === "baker-pocket") {
           comp.addRepresentation("ball+stick", Object.assign({}, base, { radius: 0.22 }));
         } else if (style === "surface-ligand" || style === "licorice-all") {
@@ -510,7 +497,7 @@
     }
 
     ligandComps.forEach(function (lc, idx) {
-      addLig(lc, LIGAND_COLORS[idx % LIGAND_COLORS.length], "配体" + (idx + 1));
+      addLig(lc, "配体" + (idx + 1));
     });
 
     stage.autoView(800);
@@ -720,11 +707,7 @@
               }
               sectionViewer.classList.remove("hidden");
               setHint(
-                "预览 · 蛋白 + " +
-                  ligandComps.length +
-                  " 个配体（按元素着色；多配体碳色 " +
-                  LIGAND_COLORS.slice(0, ligandComps.length).join(" / ") +
-                  "）"
+                "预览 · 蛋白 + " + ligandComps.length + " 个配体（按元素着色）"
               );
               applyDualStyle(styleSelect ? styleSelect.value : "cartoon-ligand");
             })
