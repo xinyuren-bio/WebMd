@@ -4,6 +4,8 @@
   var stage = null;
   var currentComp = null;
   var ligandComp = null;
+  var ligandComps = [];
+  var LIGAND_COLORS = ["#e11d48", "#2563eb", "#ca8a04"];
   var isLocalPreview = false;
   var debugLines = [];
 
@@ -425,19 +427,30 @@
         stage.removeComponent(currentComp);
         currentComp = null;
       }
-      if (ligandComp) {
-        stage.removeComponent(ligandComp);
-        ligandComp = null;
-      }
+      ligandComps.forEach(function (c) {
+        stage.removeComponent(c);
+      });
+      ligandComps = [];
+      ligandComp = null;
     }
   }
 
+  function normalizeMol2Files(mol2File) {
+    if (!mol2File) return [];
+    if (Array.isArray(mol2File)) {
+      return mol2File.filter(Boolean).slice(0, 3);
+    }
+    return [mol2File];
+  }
+
   function applyDualStyle(style) {
-    if (!currentComp || !ligandComp || !stage) return;
+    if (!currentComp || !ligandComps.length || !stage) return;
 
     clearError();
     currentComp.removeAllRepresentations();
-    ligandComp.removeAllRepresentations();
+    ligandComps.forEach(function (lc) {
+      lc.removeAllRepresentations();
+    });
 
     var protSele = "protein or (polymer and not hetero)";
     var repErrors = [];
@@ -450,35 +463,55 @@
       }
     }
 
-    function addLig(type, params, label) {
+    // 配体按元素着色；多配体时仅碳原子用不同底色区分（O/N/S 等仍走元素色）
+    function ligColorScheme(carbonHex) {
+      if (window.NGL && NGL.ColormakerRegistry) {
+        return NGL.ColormakerRegistry.addScheme(function () {
+          this.atomColor = function (atom) {
+            return bakerLigandColor(atom, carbonHex);
+          };
+        }, "dual-ligand-element");
+      }
+      return "element";
+    }
+
+    function addLig(comp, color, label) {
       try {
-        ligandComp.addRepresentation(type, Object.assign({ sele: "all" }, params));
+        var schemeId = ligColorScheme(color);
+        var base = { sele: "all", colorScheme: schemeId };
+        if (style === "baker-overall" || style === "baker-pocket") {
+          comp.addRepresentation("ball+stick", Object.assign({}, base, { radius: 0.22 }));
+        } else if (style === "surface-ligand" || style === "licorice-all") {
+          comp.addRepresentation("licorice", base);
+        } else if (style === "cartoon-spacefill") {
+          comp.addRepresentation("spacefill", Object.assign({}, base, { scale: 0.35 }));
+        } else {
+          comp.addRepresentation("ball+stick", base);
+        }
       } catch (e) {
-        repErrors.push((label || type) + ": " + (e.message || e));
+        repErrors.push((label || "配体") + ": " + (e.message || e));
       }
     }
 
     if (style === "baker-overall") {
       addProt("cartoon", { color: "chainid" }, "蛋白");
       addProt("surface", { color: "chainid", opacity: 0.35 }, "表面");
-      addLig("ball+stick", { color: "yellow" }, "配体");
     } else if (style === "baker-pocket") {
       addProt("cartoon", { color: "chainid", opacity: 0.5 }, "蛋白");
       addProt("licorice", { sele: "protein", color: "element", radius: 0.12 }, "口袋");
-      addLig("ball+stick", { color: "yellow", radius: 0.22 }, "配体");
     } else if (style === "surface-ligand") {
       addProt("surface", { color: "chainid", opacity: 0.85 }, "蛋白表面");
-      addLig("licorice", { color: "element" }, "配体");
     } else if (style === "licorice-all") {
       addProt("licorice", { color: "element" }, "蛋白");
-      addLig("licorice", { color: "element" }, "配体");
     } else if (style === "cartoon-spacefill") {
       addProt("cartoon", { color: "chainid" }, "蛋白");
-      addLig("spacefill", { color: "element", scale: 0.35 }, "配体");
     } else {
       addProt("cartoon", { color: "chainid" }, "蛋白");
-      addLig("ball+stick", { color: "element" }, "配体");
     }
+
+    ligandComps.forEach(function (lc, idx) {
+      addLig(lc, LIGAND_COLORS[idx % LIGAND_COLORS.length], "配体" + (idx + 1));
+    });
 
     stage.autoView(800);
     stage.handleResize();
@@ -490,7 +523,7 @@
   }
 
   function applyStyle(style) {
-    if (isLocalPreview && currentComp && ligandComp) {
+    if (isLocalPreview && currentComp && ligandComps.length) {
       applyDualStyle(style);
       return;
     }
@@ -644,11 +677,12 @@
   }
 
   function loadFromFiles(pdbFile, mol2File) {
-    if (!pdbFile || !mol2File || !sectionViewer) return;
+    var mol2Files = normalizeMol2Files(mol2File);
+    if (!pdbFile || !mol2Files.length || !sectionViewer) return;
 
     isLocalPreview = true;
     resetDebug();
-    logDebug("预览模式", "本地上传 PDB + MOL2");
+    logDebug("预览模式", "本地上传 PDB + " + mol2Files.length + " 个 MOL2");
 
     waitForNgl(function () {
       setHint("正在加载上传结构…");
@@ -658,20 +692,40 @@
           var st = createStage();
           clearComponents();
 
-          Promise.all([
+          var promises = [
             st.loadFile(pdbFile, { ext: "pdb", defaultRepresentation: false }),
-            st.loadFile(mol2File, { ext: "mol2", defaultRepresentation: false }),
-          ])
+          ];
+          mol2Files.forEach(function (f) {
+            promises.push(st.loadFile(f, { ext: "mol2", defaultRepresentation: false }));
+          });
+
+          Promise.all(promises)
             .then(function (comps) {
               currentComp = comps[0];
-              ligandComp = comps[1];
+              ligandComps = comps.slice(1);
+              ligandComp = ligandComps[0] || null;
               var nProt = currentComp.structure.atomCount;
-              var nLig = ligandComp.structure.atomCount;
-              logDebug("解析结果", "蛋白原子=" + nProt + "，配体原子=" + nLig);
-              if (!nProt && !nLig) {
-                throw new Error("蛋白与配体结构均为空");
+              var nLigTotal = ligandComps.reduce(function (s, c) {
+                return s + c.structure.atomCount;
+              }, 0);
+              logDebug(
+                "预览解析",
+                "蛋白原子=" + nProt + " | 配体数=" + ligandComps.length + " | 配体原子合计=" + nLigTotal
+              );
+              if (!nProt) {
+                throw new Error("PDB 解析后蛋白原子数为 0");
               }
-              setHint("上传结构预览 · 蛋白 " + nProt + " 原子 + 配体 " + nLig + " 原子");
+              if (!ligandComps.length) {
+                throw new Error("MOL2 解析失败");
+              }
+              sectionViewer.classList.remove("hidden");
+              setHint(
+                "预览 · 蛋白 + " +
+                  ligandComps.length +
+                  " 个配体（按元素着色；多配体碳色 " +
+                  LIGAND_COLORS.slice(0, ligandComps.length).join(" / ") +
+                  "）"
+              );
               applyDualStyle(styleSelect ? styleSelect.value : "cartoon-ligand");
             })
             .catch(function (err) {
@@ -711,7 +765,7 @@
     btnResetView.addEventListener("click", function () {
       try {
         if (stage) {
-          if (isLocalPreview && ligandComp) {
+          if (isLocalPreview && ligandComps.length) {
             stage.autoView(800);
           } else if (currentComp) {
             currentComp.autoView(800);
@@ -731,5 +785,8 @@
     load: loadStructure,
     loadFromFiles: loadFromFiles,
     hide: hideViewer,
+    hasLocalPreview: function () {
+      return isLocalPreview && currentComp && ligandComps.length > 0;
+    },
   };
 })();
