@@ -6,9 +6,22 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from summary_util import sanitize_user_summary
+
 logger = logging.getLogger(__name__)
 
 META_FILENAME = "task_meta.json"
+
+
+def _md_label(s: str) -> str:
+    _m = {
+        "none": "未开始",
+        "queued": "排队等待",
+        "running": "模拟运行中",
+        "completed": "模拟已完成",
+        "failed": "模拟失败",
+    }
+    return _m.get(s, s)
 
 
 class TaskStatus(str, enum.Enum):
@@ -41,6 +54,7 @@ class TaskStatus(str, enum.Enum):
 @dataclass
 class Task:
     task_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    user_id: str = ""
     status: TaskStatus = TaskStatus.PENDING
     params: dict = field(default_factory=dict)
     work_dir: str = ""
@@ -54,10 +68,23 @@ class Task:
     payment_amount: float | None = None
     payment_claimed_at: float | None = None
     payment_note: str = ""
+    md_status: str = "none"  # none | queued | running | completed | failed
+    atom_count: int = 0
+    autodl_ssh_command: str = ""
+    autodl_ssh_host: str = ""
+    autodl_ssh_port: int = 22
+    autodl_ssh_user: str = "root"
+    autodl_ssh_password: str = ""
+    autodl_server_id: str = ""
+    md_completed_at: float | None = None
+    analysis_summary: str = ""
+    md_sim_zip: str = ""
+    md_analysis_zip: str = ""
 
     def to_dict(self) -> dict:
         return {
             "task_id": self.task_id,
+            "user_id": self.user_id,
             "status": self.status.value,
             "status_label": self.status.label,
             "params": self.params,
@@ -69,6 +96,29 @@ class Task:
             "payment_status": self.payment_status,
             "payment_amount": self.payment_amount,
             "payment_claimed_at": self.payment_claimed_at,
+            "md_status": self.md_status,
+            "atom_count": self.atom_count,
+        }
+
+    def to_public_dict(self) -> dict:
+        """公开状态页（无需登录）。"""
+        return {
+            "task_id": self.task_id,
+            "status": self.status.value,
+            "status_label": self.status.label,
+            "payment_status": self.payment_status,
+            "payment_amount": self.payment_amount,
+            "paid": self.paid,
+            "md_status": self.md_status,
+            "md_status_label": _md_label(self.md_status),
+            "simulation_time_ns": self.params.get("simulation_time_ns"),
+            "created_at": self.created_at,
+            "can_pay": self.status == TaskStatus.COMPLETED and self.payment_status == "unpaid",
+            "can_download": self.paid and self.payment_status == "paid",
+            "atom_count": self.atom_count,
+            "analysis_summary": sanitize_user_summary(self.analysis_summary) if self.analysis_summary else "",
+            "can_download_md_sim": bool(self.md_sim_zip and Path(self.md_sim_zip).is_file()),
+            "can_download_md_analysis": bool(self.md_analysis_zip and Path(self.md_analysis_zip).is_file()),
         }
 
     def save(self) -> None:
@@ -78,6 +128,7 @@ class Task:
         meta = Path(self.work_dir) / META_FILENAME
         data = {
             "task_id": self.task_id,
+            "user_id": self.user_id,
             "status": self.status.value,
             "params": self.params,
             "work_dir": self.work_dir,
@@ -91,6 +142,18 @@ class Task:
             "payment_amount": self.payment_amount,
             "payment_claimed_at": self.payment_claimed_at,
             "payment_note": self.payment_note,
+            "md_status": self.md_status,
+            "atom_count": self.atom_count,
+            "autodl_ssh_command": self.autodl_ssh_command,
+            "autodl_ssh_host": self.autodl_ssh_host,
+            "autodl_ssh_port": self.autodl_ssh_port,
+            "autodl_ssh_user": self.autodl_ssh_user,
+            "autodl_ssh_password": self.autodl_ssh_password,
+            "autodl_server_id": self.autodl_server_id,
+            "md_completed_at": self.md_completed_at,
+            "analysis_summary": self.analysis_summary,
+            "md_sim_zip": self.md_sim_zip,
+            "md_analysis_zip": self.md_analysis_zip,
         }
         meta.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -101,6 +164,7 @@ class Task:
             data = json.loads(p.read_text(encoding="utf-8"))
             task = cls(
                 task_id=data["task_id"],
+                user_id=data.get("user_id", ""),
                 status=TaskStatus(data["status"]),
                 params=data.get("params", {}),
                 work_dir=data.get("work_dir", ""),
@@ -114,6 +178,18 @@ class Task:
                 payment_amount=data.get("payment_amount"),
                 payment_claimed_at=data.get("payment_claimed_at"),
                 payment_note=data.get("payment_note", ""),
+                md_status=data.get("md_status", "none"),
+                atom_count=int(data.get("atom_count", 0) or 0),
+                autodl_ssh_command=data.get("autodl_ssh_command", ""),
+                autodl_ssh_host=data.get("autodl_ssh_host", ""),
+                autodl_ssh_port=int(data.get("autodl_ssh_port", 22) or 22),
+                autodl_ssh_user=data.get("autodl_ssh_user", "root"),
+                autodl_ssh_password=data.get("autodl_ssh_password", ""),
+                autodl_server_id=data.get("autodl_server_id", ""),
+                md_completed_at=data.get("md_completed_at"),
+                analysis_summary=data.get("analysis_summary", ""),
+                md_sim_zip=data.get("md_sim_zip", ""),
+                md_analysis_zip=data.get("md_analysis_zip", ""),
             )
             return task
         except (json.JSONDecodeError, KeyError, ValueError) as e:
