@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>访问统计 · WebMD 管理</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .admin-page { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+    .admin-page h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .admin-key-row { display: flex; gap: 0.5rem; margin: 1rem 0 1.5rem; flex-wrap: wrap; }
+    .admin-key-row input { flex: 1; min-width: 200px; padding: 0.5rem 0.75rem; border: 1px solid #ccc; border-radius: 6px; }
+    .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 1.5rem; }
+    .stat-card { background: #f5f7fa; border: 1px solid #e8ecf0; border-radius: 8px; padding: 14px 16px; }
+    .stat-card .label { font-size: 0.8125rem; color: #666; margin-bottom: 4px; }
+    .stat-card .value { font-size: 1.75rem; font-weight: 800; color: var(--color-primary, #1a6b5c); }
+    .admin-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .admin-table th, .admin-table td { border: 1px solid #e0e0e0; padding: 0.6rem 0.75rem; text-align: left; }
+    .admin-table th { background: #f5f7fa; }
+    .admin-empty { color: #666; padding: 2rem 0; text-align: center; }
+    .admin-msg { margin-top: 1rem; color: #c0392b; }
+    .admin-msg.ok { color: #27ae60; }
+    .admin-nav { margin-bottom: 1rem; font-size: 0.875rem; }
+    .admin-nav a { color: var(--color-primary, #1a6b5c); }
+  </style>
+</head>
+<body>
+  <div class="admin-page">
+    <p class="admin-nav"><a href="/admin.html">← 支付核实</a> · <a href="/">返回首页</a></p>
+    <h1>访问统计</h1>
+    <p class="hint">统计页面浏览量（PV/UV）、MD 完成分档（10/100/200 ns）与每用户完成数。密钥：<code>WEBMD_ADMIN_KEY</code></p>
+    <div class="admin-key-row">
+      <input type="password" id="admin-key" placeholder="管理员密钥" autocomplete="off">
+      <button type="button" class="btn btn-primary" id="btn-load">刷新数据</button>
+    </div>
+    <div id="stats-content">
+      <p class="admin-empty">请输入密钥并刷新</p>
+    </div>
+    <p class="admin-msg hidden" id="admin-msg"></p>
+  </div>
+  <script src="/js/stats.js?v=20260714e"></script>
+</body>
+</html>

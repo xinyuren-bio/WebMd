@@ -15,7 +15,7 @@ from config import (
     TIP_ENABLED, TIP_QR_URL, ANALYTICS_FILE, AUTODL_MARKET_URL, MD_CALLBACK_SECRET,
 )
 from payment_util import calc_payment_amount, verify_admin_key, price_for_sim_ns, qr_urls_for_sim_ns
-from analytics_util import record_visit, get_analytics_stats
+from analytics_util import record_visit, get_analytics_stats, collect_md_completion_stats
 from email_util import send_admin_payment_notify, send_admin_need_autodl_notify, send_admin_md_completed_notify, send_user_md_completed_notify
 from user_store import get_user_by_id, count_users, list_recent_users
 from config import USERS_DB
@@ -764,19 +764,39 @@ async def track_visit(r: Request, body: VisitBody):
 
 @router.get("/admin/analytics/stats")
 async def admin_analytics_stats(admin_key: str = ""):
-    """管理员：查看访问统计。"""
+    """管理员：查看访问统计与 MD 完成分档。"""
     if not verify_admin_key(admin_key):
         raise HTTPException(status_code=403, detail="管理员密钥无效")
-    return get_analytics_stats(Path(ANALYTICS_FILE))
+    data = get_analytics_stats(Path(ANALYTICS_FILE))
+    md = collect_md_completion_stats(tasks.values())
+    # 为排行补充邮箱，便于对照
+    db = Path(USERS_DB)
+    enriched = []
+    for row in md.get("md_top_users", []):
+        u = get_user_by_id(db, row["user_id"]) if row.get("user_id") else None
+        enriched.append({
+            **row,
+            "email": u.get("email", "") if u else "",
+        })
+    md["md_top_users"] = enriched
+    data.update(md)
+    return data
 
 
 @router.get("/admin/users/stats")
 async def admin_users_stats(admin_key: str = ""):
-    """管理员：查看注册用户统计。"""
+    """管理员：查看注册用户统计（含每人已完成模拟数）。"""
     if not verify_admin_key(admin_key):
         raise HTTPException(status_code=403, detail="管理员密钥无效")
     db = Path(USERS_DB)
+    md = collect_md_completion_stats(tasks.values())
+    per_user = md.get("md_per_user") or {}
+    recent = list_recent_users(db, limit=50)
+    for u in recent:
+        u["md_completed"] = int(per_user.get(u.get("user_id", ""), 0))
     return {
         "total": count_users(db),
-        "recent": list_recent_users(db, limit=50),
+        "recent": recent,
+        "md_completed_total": md.get("md_completed_total", 0),
+        "md_by_ns": md.get("md_by_ns", {}),
     }
