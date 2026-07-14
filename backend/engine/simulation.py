@@ -131,24 +131,24 @@ RUN_SCRIPT = """\
 # GROMACS 模拟一键运行脚本（由 MD 体系搭建工具自动生成）
 set -euo pipefail
 
-GMX="${{GMX:-gmx}}"
-NTOMP="${{NTOMP:-4}}"
+export PATH="/usr/local/gromacs/bin:${PATH}"
+GMX="${GMX:-gmx}"
 
 echo "=== [1/4] 能量最小化 ==="
 $GMX grompp -f mdp/em.mdp -c system.gro -p system.top -o em.tpr -maxwarn 2
-$GMX mdrun -v -deffnm em -ntomp $NTOMP
+$GMX mdrun -v -deffnm em -ntmpi 1
 
 echo "=== [2/4] NVT 平衡 ==="
 $GMX grompp -f mdp/nvt.mdp -c em.gro -p system.top -o nvt.tpr -maxwarn 2
-$GMX mdrun -v -deffnm nvt -ntomp $NTOMP
+$GMX mdrun -v -deffnm nvt -ntmpi 1
 
 echo "=== [3/4] NPT 平衡 ==="
 $GMX grompp -f mdp/npt.mdp -c nvt.gro -t nvt.cpt -p system.top -o npt.tpr -maxwarn 2
-$GMX mdrun -v -deffnm npt -ntomp $NTOMP
+$GMX mdrun -v -deffnm npt -ntmpi 1
 
 echo "=== [4/4] 生产 MD ==="
 $GMX grompp -f mdp/md.mdp -c npt.gro -t npt.cpt -p system.top -o md.tpr -maxwarn 2
-$GMX mdrun -v -deffnm md -ntomp $NTOMP
+$GMX mdrun -v -deffnm md -ntmpi 1
 
 echo "=== 模拟完成 ==="
 echo "轨迹文件: md.xtc  能量文件: md.edr  日志: md.log"
@@ -162,7 +162,7 @@ def generate_gromacs_inputs(work_dir: str, params: dict) -> str:
     mdp_dir.mkdir(exist_ok=True)
 
     dt = params.get("timestep", 0.002)          # ps
-    temperature = params.get("temperature", 298.15)
+    temperature = params.get("temperature", 310.0)
     pressure = params.get("pressure", 1.0)
     cutoff = params.get("nonbonded_cutoff", 1.0)
     tau_t = params.get("tau_t", 0.1)

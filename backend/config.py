@@ -28,7 +28,7 @@ TASKS_DIR = os.path.join(BASE_DIR, "tasks")
 os.makedirs(TASKS_DIR, exist_ok=True)
 
 DEFAULT_PARAMS = {
-    "temperature": 298.15,        # K
+    "temperature": 310.0,         # K（生理温度）
     "pressure": 1.0,              # bar
     "timestep": 0.002,            # ps (2 fs)
     "simulation_time_ns": 100.0,  # ns
