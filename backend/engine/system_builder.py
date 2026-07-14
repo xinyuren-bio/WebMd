@@ -311,35 +311,30 @@ def build_full_system(
 
     salt_type: nacl 或 kcl；中和与背景盐阳离子一致。
     ligand_specs 可选，格式 [{gaff_mol2, frcmod, resname}]；未传时使用单配体参数。
+
+    注意：复制到工作目录的配体文件统一命名为 ligN_gaff.mol2 / ligN.frcmod，
+    避免原文件名含空格或括号时 tleap 解析失败（如 ligand (1).mol2）。
     """
-    if ligand_specs:
-        leap_ligands = []
-        copy_srcs = []
-        gaff_abs = []
-        for i, spec in enumerate(ligand_specs, 1):
-            gaff_src = Path(spec["gaff_mol2"]).resolve()
-            frc_src = Path(spec["frcmod"]).resolve()
-            gaff_name = f"lig{i}_{gaff_src.name}"
-            frc_name = f"lig{i}_{frc_src.name}"
-            leap_ligands.append({
-                "leap_var": f"lig{i}",
-                "gaff_mol2": gaff_name,
-                "frcmod": frc_name,
-            })
-            copy_srcs.append((gaff_src, gaff_name))
-            copy_srcs.append((frc_src, frc_name))
-            gaff_abs.append(str(gaff_src))
-    else:
-        leap_ligands = [{
-            "leap_var": "lig1",
-            "gaff_mol2": Path(gaff_mol2).name,
-            "frcmod": Path(frcmod).name,
-        }]
-        copy_srcs = [
-            (Path(gaff_mol2).resolve(), Path(gaff_mol2).name),
-            (Path(frcmod).resolve(), Path(frcmod).name),
-        ]
-        gaff_abs = [str(Path(gaff_mol2).resolve())]
+    # 单配体与多配体统一走同一复制/命名逻辑
+    specs = list(ligand_specs) if ligand_specs else [
+        {"gaff_mol2": gaff_mol2, "frcmod": frcmod},
+    ]
+    leap_ligands = []
+    copy_srcs = []
+    gaff_abs = []
+    for i, spec in enumerate(specs, 1):
+        gaff_src = Path(spec["gaff_mol2"]).resolve()
+        frc_src = Path(spec["frcmod"]).resolve()
+        gaff_name = f"lig{i}_gaff.mol2"
+        frc_name = f"lig{i}.frcmod"
+        leap_ligands.append({
+            "leap_var": f"lig{i}",
+            "gaff_mol2": gaff_name,
+            "frcmod": frc_name,
+        })
+        copy_srcs.append((gaff_src, gaff_name))
+        copy_srcs.append((frc_src, frc_name))
+        gaff_abs.append(str(gaff_src))
 
     work = Path(work_dir)
 

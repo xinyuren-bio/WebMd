@@ -171,17 +171,14 @@ async def create_task(
         f.write(await pdb_file.read())
 
     mol2_paths: list[str] = []
-    seen_names: set[str] = set()
     for idx, up in enumerate([mol2_file, mol2_file_2, mol2_file_3], 1):
         if up is None or not up.filename:
             continue
-        fname = Path(up.filename).name
-        if not fname.lower().endswith(".mol2"):
+        raw_name = Path(up.filename).name
+        if not raw_name.lower().endswith(".mol2"):
             raise HTTPException(status_code=400, detail=f"配体 {idx} 须为 MOL2 格式")
-        if fname in seen_names:
-            raise HTTPException(status_code=400, detail=f"配体文件名重复: {fname}")
-        seen_names.add(fname)
-        dest = work_dir / fname
+        # 统一存为 ligand_N.mol2，避免 "ligand (1).mol2" 空格导致 tleap 解析失败
+        dest = work_dir / f"ligand_{idx}.mol2"
         with open(dest, "wb") as f:
             f.write(await up.read())
         mol2_paths.append(str(dest))
