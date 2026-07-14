@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260705e">
+<link rel="stylesheet" href="/css/style.css?v=20260714c">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -19,7 +19,16 @@
     <nav class="site-nav" aria-label="主功能">
       <button type="button" class="site-nav-link workspace-nav" data-workspace="prepare">体系准备</button>
       <button type="button" class="site-nav-link workspace-nav" data-workspace="analysis">轨迹分析</button>
+      <button type="button" class="site-nav-link workspace-nav" data-workspace="guide">使用教程</button>
     </nav>
+    <div class="site-auth" id="auth-guest">
+      <button type="button" class="btn btn-sm btn-secondary" id="btn-login">登录</button>
+      <button type="button" class="btn btn-sm btn-primary" id="btn-register">注册</button>
+    </div>
+    <div class="site-auth hidden" id="auth-user-bar">
+      <span class="site-auth-email" id="auth-user-email"></span>
+      <button type="button" class="btn btn-sm btn-secondary" id="btn-logout">退出</button>
+    </div>
   </div>
 </header>
 
@@ -181,6 +190,13 @@
       <div class="footer-links">
         <button type="button" data-go="prepare">体系准备</button>
         <button type="button" data-go="analysis">轨迹分析</button>
+        <button type="button" data-go="guide">使用教程</button>
+      </div>
+      <div class="footer-support">
+        <div class="footer-support-info">
+          <strong>售后服务</strong>
+          <p>微信 <span class="footer-wechat-id">biomd777</span>，有任何问题欢迎联系</p>
+        </div>
       </div>
       <div class="footer-copy">
         <p class="footer-tagline">从体系搭建到轨迹分析 · 助力蛋白-配体分子动力学研究</p>
@@ -205,7 +221,7 @@
       <div class="step-badge">1</div>
       <div>
         <h2>上传文件</h2>
-        <p class="card-subtitle">蛋白 PDB 与配体 MOL2 为必填项</p>
+        <p class="card-subtitle">蛋白 PDB 必填；配体 MOL2 至少 1 个，最多 3 个（请在外部软件中摆好相对位置）</p>
       </div>
     </div>
     <div class="form-row">
@@ -219,8 +235,8 @@
           </div>
         </div>
       </div>
-      <div class="form-group">
-        <label for="mol2-file">小分子 MOL2 文件</label>
+      <div class="form-group ligand-upload-primary">
+        <label for="mol2-file"><span class="ligand-color-dot ligand-dot-1"></span>配体 1 · MOL2 <span class="ligand-tag">LIG1</span></label>
         <div class="file-input-wrapper">
           <div class="file-input-zone">
             <span class="file-input-btn">选取文件</span>
@@ -230,7 +246,27 @@
         </div>
       </div>
     </div>
+    <div id="ligand-extra-list" class="ligand-extra-list"></div>
+    <div class="ligand-upload-actions">
+      <button type="button" class="btn btn-sm btn-secondary" id="btn-add-ligand">+ 添加配体（最多 3 个）</button>
+      <p class="hint ligand-upload-hint">多配体时请在 PyMOL / ChimeraX 中预先对齐坐标后再分别导出 MOL2；提交后残基名将自动设为 LIG1、LIG2、LIG3。
+        若手头是对接复合物，请先 <a class="guide-text-link" href="/#guide-prep-video">观看拆分教程视频</a>（导出 PDB + SDF，再转 MOL2 上传）。</p>
+    </div>
   </section>
+
+  <template id="ligand-extra-template">
+    <div class="form-group ligand-extra-row">
+      <label><span class="ligand-color-dot"></span><span class="ligand-extra-label">配体</span> · MOL2 <span class="ligand-tag"></span></label>
+      <div class="file-input-wrapper ligand-extra-input-wrap">
+        <div class="file-input-zone">
+          <span class="file-input-btn">选取文件</span>
+          <span class="file-name ligand-extra-name">未选择文件</span>
+          <input type="file" accept=".mol2" class="file-input-native ligand-extra-file">
+        </div>
+        <button type="button" class="btn btn-sm btn-secondary ligand-remove-btn">移除</button>
+      </div>
+    </div>
+  </template>
 
   <section class="card hidden" id="section-viewer">
     <div class="card-header">
@@ -271,7 +307,11 @@
     <div class="form-row">
       <div class="form-group">
         <label for="sim-time">模拟时长 (ns)</label>
-        <input type="number" id="sim-time" value="100" min="0.1" step="0.1">
+        <select id="sim-time" class="sim-time-select">
+          <option value="10">10 ns</option>
+          <option value="100" selected>100 ns</option>
+          <option value="200">200 ns</option>
+        </select>
       </div>
       <div class="form-group">
         <label for="temperature">温度 (K)</label>
@@ -321,6 +361,13 @@
           <label for="report-interval">轨迹输出间隔 (ps)</label>
           <input type="number" id="report-interval" value="100" min="1" step="1">
         </div>
+        <div class="form-group form-group-checkbox">
+          <label class="checkbox-inline" for="ligand-add-h">
+            <input type="checkbox" id="ligand-add-h" checked>
+            <span>配体自动补氢</span>
+          </label>
+          <p class="hint">PyMOL 拆出的小分子常缺氢；默认开启，在 GAFF2 参数化前自动补全（推荐）</p>
+        </div>
       </div>
     </details>
   </section>
@@ -343,6 +390,11 @@
       </div>
       <p class="progress-text" id="progress-text">等待中...</p>
       <p class="task-id" id="task-id-display"></p>
+      <div id="task-qr-area" class="task-qr-area hidden">
+        <p class="hint"><strong>请保存下方二维码</strong>，可随时扫码查看任务进度（无需登录）</p>
+        <img id="task-qr-img" class="task-qr-img" alt="任务状态二维码" width="180" height="180">
+        <p class="task-qr-link"><a id="task-status-link" href="#" target="_blank" rel="noopener">打开状态页</a></p>
+      </div>
     </div>
     <div id="error-area" class="hidden error-box">
       <strong>错误:</strong> <span id="error-msg"></span>
@@ -358,9 +410,9 @@
       </div>
     </div>
     <div class="download-actions">
-      <button type="button" id="btn-pay-download" class="btn btn-primary hidden">支付宝支付 ¥30 后下载</button>
-      <a id="btn-download" class="btn btn-success hidden" href="#" download>下载模拟文件包 (tar.gz)</a>
-      <p class="hint" id="download-hint">任务完成后即可下载结果包</p>
+      <button type="button" id="btn-pay-download" class="btn btn-primary hidden">支付并启动模拟</button>
+      <button type="button" id="btn-download" class="btn btn-success hidden">下载模拟文件包 (tar.gz)</button>
+      <p class="hint" id="download-hint">前处理完成后需支付方可下载文件包并启动 MD 模拟</p>
 
       <div id="tip-section" class="tip-section hidden">
         <div class="tip-header">
@@ -383,15 +435,26 @@
     <div class="payment-modal-backdrop" id="payment-modal-backdrop"></div>
     <div class="payment-modal-panel">
       <button type="button" class="payment-modal-close" id="payment-modal-close" aria-label="关闭">×</button>
-      <h3 id="payment-modal-title">支付宝扫码支付</h3>
-      <p class="payment-amount">请支付 <strong>¥<span id="payment-amount">30</span></strong></p>
-      <p class="payment-amount-hint">每单金额含唯一尾数（¥30.01–30.99），便于核对到账，请勿四舍五入</p>
-      <div class="payment-qr-wrap">
-        <img id="payment-qr" src="/assets/images/pay.jpg" alt="支付宝收款码">
+      <h3 id="payment-modal-title">支付启动 MD 模拟</h3>
+      <p class="payment-amount">请支付 <strong>¥<span id="payment-amount">—</span></strong></p>
+      <p class="payment-amount-hint">扫码后金额已预设为 <strong>¥<span id="payment-amount-hint">—</span></strong>，选择支付宝或微信，确认金额后输入支付密码即可</p>
+      <div class="payment-qr-row">
+        <div class="payment-qr-item">
+          <p class="payment-qr-label">支付宝</p>
+          <div class="payment-qr-wrap">
+            <img id="payment-qr" src="/assets/images/pay.jpg" alt="支付宝收款码">
+          </div>
+        </div>
+        <div class="payment-qr-item">
+          <p class="payment-qr-label">微信支付</p>
+          <div class="payment-qr-wrap">
+            <img id="payment-wechat-qr" src="/assets/images/wechat_pay.png" alt="微信收款码">
+          </div>
+        </div>
       </div>
-      <p class="payment-note">请使用支付宝扫描上方二维码，按上方<strong>精确金额</strong>转账</p>
-      <p class="payment-task-id">转账备注请填写任务 ID：<code id="payment-task-id"></code></p>
-      <label class="payment-payer-note-label" for="payment-payer-note">付款人备注（选填，如支付宝昵称）</label>
+      <p class="payment-note">请扫描上方<strong>支付宝或微信</strong>收款码，金额应为 <strong>¥<span id="payment-amount-note">—</span></strong>（无需手动改金额）</p>
+      <p class="payment-task-id">付款备注请填写任务 ID（便于核实）：<code id="payment-task-id"></code></p>
+      <label class="payment-payer-note-label" for="payment-payer-note">付款人备注（选填，如支付宝/微信昵称或支付方式）</label>
       <input type="text" id="payment-payer-note" class="payment-payer-note" maxlength="120" placeholder="便于管理员核对时可填写">
       <div id="payment-pending-box" class="payment-pending-box hidden">
         <p class="payment-pending-title">已提交，等待核实</p>
@@ -433,6 +496,218 @@
         <span>生成<br>mdp+脚本</span>
       </div>
     </div>
+  </section>
+</div>
+
+<div class="workspace-panel" data-workspace="guide" role="tabpanel" hidden>
+  <header class="workspace-header">
+    <span class="workspace-header-badge">Guide</span>
+    <h1>使用教程</h1>
+    <p>从零开始完成蛋白-配体体系的 GROMACS 前处理与 MD 模拟提交（仅体系准备流程）</p>
+  </header>
+
+  <section class="card guide-overview">
+    <p class="guide-lead">WebMD 体系准备模块会自动完成：蛋白修复 → GAFF2 配体参数化 → 溶剂化 → 转 GROMACS 拓扑，并可选云端 MD 模拟。按下列步骤操作即可。</p>
+    <div class="guide-quick-nav">
+      <a href="#guide-step-0">注册登录</a>
+      <a href="#guide-prep-video">拆分复合物</a>
+      <a href="#guide-step-1">准备文件</a>
+      <a href="#guide-step-2">上传预览</a>
+      <a href="#guide-step-3">设置参数</a>
+      <a href="#guide-step-4">提交任务</a>
+      <a href="#guide-step-5">支付下载</a>
+      <a href="#guide-faq">常见问题</a>
+    </div>
+  </section>
+
+  <section class="card guide-step" id="guide-step-0">
+    <div class="card-header">
+      <div class="step-badge">0</div>
+      <div>
+        <h2>注册并登录</h2>
+        <p class="card-subtitle">提交任务与下载结果需要登录账号</p>
+      </div>
+    </div>
+    <ol class="guide-list">
+      <li>点击右上角 <strong>注册</strong>，填写邮箱并设置密码（至少 6 位）。</li>
+      <li>查收邮件中的 6 位验证码，完成注册。</li>
+      <li>使用邮箱 + 密码 <strong>登录</strong> 后即可进入「体系准备」。</li>
+    </ol>
+    <p class="guide-note">提示：任务进度二维码可<strong>免登录</strong>查看；下载文件包与启动 MD 模拟需登录。</p>
+  </section>
+
+  <section class="card guide-step guide-video-step" id="guide-prep-video">
+    <div class="card-header">
+      <div class="step-badge">▶</div>
+      <div>
+        <h2>视频教程：拆分对接复合物</h2>
+        <p class="card-subtitle">从对接结果中分别导出蛋白 PDB 与小分子 SDF，用于 WebMD 上传</p>
+      </div>
+    </div>
+    <p class="guide-lead">若你已完成分子对接、手头是<strong>蛋白-配体复合物</strong>（单个 pdb 或复合结构文件），需先把<strong>受体蛋白</strong>与<strong>配体小分子</strong>拆成两个文件。下方视频演示完整操作流程。</p>
+    <div class="guide-video-wrap">
+      <video
+        class="guide-video"
+        controls
+        playsinline
+        preload="metadata"
+        poster=""
+        aria-label="拆分对接复合物为蛋白 PDB 与配体 SDF 的操作演示">
+        <source src="/assets/videos/prepare-complex-split.mp4" type="video/mp4">
+        您的浏览器不支持视频播放，请升级浏览器或使用 Chrome / Edge 访问。
+      </video>
+    </div>
+    <div class="guide-video-summary">
+      <h3>视频要点</h3>
+      <ol class="guide-list">
+        <li>打开对接得到的<strong>复合物结构</strong>（含蛋白与配体）。</li>
+        <li>在可视化软件中<strong>选中配体</strong>，删除或隐藏蛋白，仅保留小分子坐标。</li>
+        <li>将配体<strong>另存为 SDF</strong>（保留三维坐标与键连信息）。</li>
+        <li>恢复/加载复合物后，<strong>删除配体</strong>，仅保留蛋白（含结合位点构象）。</li>
+        <li>将蛋白<strong>另存为 PDB</strong>，作为 WebMD 的蛋白输入文件。</li>
+      </ol>
+    </div>
+    <p class="guide-note guide-video-note">
+      <strong>上传 WebMD 前：</strong>网站当前接受 <strong>PDB（蛋白）</strong> + <strong>MOL2（配体）</strong>。
+      视频中配体导出为 SDF 后，请用 PyMOL、ChimeraX 或 Open Babel 转为 MOL2，例如：
+      <code>obabel ligand.sdf -O ligand.mol2</code>。
+      多配体体系请在拆分后分别导出多个 MOL2，并在 PyMOL 中摆好相对位置后再上传。
+    </p>
+  </section>
+
+  <section class="card guide-step" id="guide-step-1">
+    <div class="card-header">
+      <div class="step-badge">1</div>
+      <div>
+        <h2>准备输入文件</h2>
+        <p class="card-subtitle">蛋白 PDB + 配体 MOL2（至少 1 个，最多 3 个）</p>
+      </div>
+    </div>
+    <div class="guide-file-grid">
+      <article class="guide-file-card">
+        <h3>蛋白 PDB</h3>
+        <p>受体/蛋白三维结构，标准 PDB 格式。建议先检查缺失残基、非标准氨基酸；系统会用 PDBFixer 自动补氢与常见缺失。</p>
+      </article>
+      <article class="guide-file-card">
+        <h3>配体 MOL2</h3>
+        <p>小分子三维结构，MOL2 格式（含原子类型与键连信息）。对接流程中若先得到 SDF，请先转换为 MOL2 再上传。将用于 GAFF2 参数化与 AM1-BCC 电荷计算。</p>
+      </article>
+    </div>
+    <p class="guide-note">请确认配体在结合口袋附近、取向合理；上传后可在下一步 3D 预览中核对。尚未拆分复合物？请先观看上方 <a href="#guide-prep-video" class="guide-inline-link guide-text-link">视频教程</a>。</p>
+  </section>
+
+  <section class="card guide-step" id="guide-step-2">
+    <div class="card-header">
+      <div class="step-badge">2</div>
+      <div>
+        <h2>上传文件并 3D 预览</h2>
+        <p class="card-subtitle">确认蛋白-配体复合物结构正确</p>
+      </div>
+    </div>
+    <ol class="guide-list">
+      <li>进入 <button type="button" class="guide-inline-link" data-go="prepare">体系准备</button>，在「上传文件」中分别选取 PDB 与 MOL2。</li>
+      <li>上传成功后自动出现 <strong>复合物 3D 预览</strong>，可旋转、缩放查看。</li>
+      <li>在「显示样式」下拉框切换视图，例如：
+        <ul>
+          <li><strong>蛋白卡通 + 配体球棍</strong>：快速总览</li>
+          <li><strong>Baker 口袋</strong>：查看结合位点与相互作用残基</li>
+          <li><strong>蛋白表面 + 配体棍状</strong>：观察配体是否处于口袋内</li>
+        </ul>
+      </li>
+      <li>结构有误请返回修改源文件后重新上传。</li>
+    </ol>
+  </section>
+
+  <section class="card guide-step" id="guide-step-3">
+    <div class="card-header">
+      <div class="step-badge">3</div>
+      <div>
+        <h2>设置模拟参数</h2>
+        <p class="card-subtitle">常用参数已有默认值，按需调整</p>
+      </div>
+    </div>
+    <div class="guide-param-table-wrap">
+      <table class="guide-param-table">
+        <thead>
+          <tr><th>参数</th><th>说明</th><th>默认参考</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>模拟时长</td><td>生产 MD 时长，可选 10 / 100 / 200 ns（对应 ¥10 / ¥66 / ¥240）</td><td>100 ns</td></tr>
+          <tr><td>温度 (K)</td><td>NVT / NPT 控温目标</td><td>298.15</td></tr>
+          <tr><td>压强 (bar)</td><td>NPT 控压目标</td><td>1.0</td></tr>
+          <tr><td>时间步长 (fs)</td><td>积分步长</td><td>2</td></tr>
+          <tr><td>离子浓度 (M)</td><td>中性化并加盐浓度</td><td>0.15</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="guide-note">展开「高级参数」可修改约束方式、非键截断、盒子边距、轨迹输出间隔，以及<strong>配体自动补氢</strong>（默认开启，适合 PyMOL 导出的缺氢小分子）；一般保持默认即可。</p>
+  </section>
+
+  <section class="card guide-step" id="guide-step-4">
+    <div class="card-header">
+      <div class="step-badge">4</div>
+      <div>
+        <h2>提交任务并保存二维码</h2>
+        <p class="card-subtitle">自动流水线 + 进度追踪</p>
+      </div>
+    </div>
+    <ol class="guide-list">
+      <li>点击 <strong>开始准备模拟体系</strong>，系统将依次执行：PDBFixer → GAFF2 → tleap 溶剂化 → acpype 转 GROMACS → 生成 mdp 与 run_md.sh。</li>
+      <li>进度条与文字日志会实时更新；请勿关闭页面直至显示「完成」。</li>
+      <li>提交成功后会显示<strong>任务 ID</strong>与<strong>二维码</strong>，请务必截图或保存。</li>
+      <li>手机扫码可随时打开状态页查看进度，<strong>无需登录</strong>。</li>
+    </ol>
+    <div class="guide-pipeline-mini">
+      <span>PDBFixer</span><span>→</span><span>GAFF2</span><span>→</span><span>tleap</span><span>→</span><span>acpype</span><span>→</span><span>mdp</span>
+    </div>
+  </section>
+
+  <section class="card guide-step" id="guide-step-5">
+    <div class="card-header">
+      <div class="step-badge">5</div>
+      <div>
+        <h2>支付、下载与 MD 模拟</h2>
+        <p class="card-subtitle">前处理完成后启动云端模拟</p>
+      </div>
+    </div>
+    <ol class="guide-list">
+      <li>前处理完成后，点击 <strong>支付并启动模拟</strong>。</li>
+      <li>按页面提示使用支付宝或微信扫码付款（金额与所选模拟时长对应，无需手动改金额）。</li>
+      <li>付款备注请填写<strong>任务 ID</strong>，便于管理员核实。</li>
+      <li>点击「我已完成支付」，等待核实（通常数分钟）。核实通过后可下载 <strong>tar.gz</strong> 模拟文件包。</li>
+      <li>MD 模拟在云端自动运行；完成后结果与分析图表将发送至您的注册邮箱。</li>
+    </ol>
+    <p class="guide-note">若仅需前处理文件、自行本地跑 MD，可在核实通过后下载文件包，内含 gro / top / mdp / run_md.sh 等。</p>
+  </section>
+
+  <section class="card guide-step guide-faq" id="guide-faq">
+    <div class="card-header">
+      <div class="step-badge">?</div>
+      <div>
+        <h2>常见问题</h2>
+        <p class="card-subtitle">体系准备相关</p>
+      </div>
+    </div>
+    <dl class="guide-faq-list">
+      <dt>只有 SDF 没有 MOL2 怎么办？</dt>
+      <dd>WebMD 上传需 MOL2。可用 Open Babel：<code>obabel ligand.sdf -O ligand.mol2</code>；或在 PyMOL / ChimeraX 中打开 SDF 后直接导出 MOL2。详见教程「拆分对接复合物」视频。</dd>
+      <dt>前处理失败怎么办？</dt>
+      <dd>查看页面红色错误提示；常见原因为 PDB 格式异常、配体 MOL2 缺少必要字段。修改源文件后重新提交。</dd>
+      <dt>3D 预览空白？</dt>
+      <dd>确认两个文件均已上传；尝试刷新页面或更换浏览器（推荐 Chrome / Edge）。</dd>
+      <dt>二维码丢了还能查进度吗？</dt>
+      <dd>状态页链接格式为 <code>/status.html?task=任务ID</code>，知道任务 ID 即可访问。</dd>
+      <dt>支付后多久能下载？</dt>
+      <dd>管理员核实转账后自动解锁，请确保付款备注含任务 ID。</dd>
+      <dt>还有问题？</dt>
+      <dd>微信联系 <strong>biomd777</strong>，附上任务 ID 与截图。</dd>
+    </dl>
+  </section>
+
+  <section class="card guide-cta">
+    <h2>准备好了？</h2>
+    <p>按教程上传 PDB + MOL2，开始你的第一条 MD 前处理任务。</p>
+    <button type="button" class="btn btn-primary" data-go="prepare">前往体系准备</button>
   </section>
 </div>
 
@@ -594,13 +869,48 @@
   </section>
 </div>
 
+<footer class="app-support-bar">
+  <div class="app-support-inner">
+    <p>售后服务 · 微信 <strong>biomd777</strong> · 有任何问题欢迎联系</p>
+  </div>
+</footer>
+
 </div>
 
-<script src="/js/main_tabs.js"></script>
+<div id="auth-modal" class="payment-modal hidden" role="dialog" aria-modal="true">
+  <div class="payment-modal-backdrop" id="auth-modal-backdrop"></div>
+  <div class="payment-modal-panel auth-modal-panel">
+    <button type="button" class="payment-modal-close" id="auth-modal-close" aria-label="关闭">×</button>
+    <h3 id="auth-modal-title">登录</h3>
+    <label class="auth-label" for="auth-email">邮箱</label>
+    <input type="email" id="auth-email" class="payment-payer-note" autocomplete="username">
+    <label class="auth-label" for="auth-password">密码（至少 6 位）</label>
+    <input type="password" id="auth-password" class="payment-payer-note" autocomplete="current-password">
+    <div id="auth-code-row" class="auth-code-row hidden">
+      <label class="auth-label" for="auth-code">邮箱验证码</label>
+      <div class="auth-code-inputs">
+        <input type="text" id="auth-code" class="payment-payer-note" maxlength="6" placeholder="6 位数字" inputmode="numeric" autocomplete="one-time-code">
+        <button type="button" class="btn btn-secondary" id="btn-send-code">获取验证码</button>
+      </div>
+      <p class="auth-code-hint">验证码将发送至您的邮箱，10 分钟内有效</p>
+    </div>
+    <p class="auth-switch">没有账号？<a href="#" id="auth-switch-register">注册</a> · 已有账号？<a href="#" id="auth-switch-login">登录</a></p>
+    <div class="payment-modal-actions">
+      <button type="button" class="btn btn-primary" id="auth-submit">登录</button>
+      <button type="button" class="btn btn-secondary" id="auth-cancel">取消</button>
+    </div>
+    <p class="payment-error hidden" id="auth-error"></p>
+  </div>
+</div>
+
+<script src="/js/analytics.js"></script>
+<script src="/js/auth.js"></script>
+<script src="/js/main_tabs.js?v=20260714"></script>
 <script src="/js/ngl.js"></script>
-<script src="/js/viewer.js"></script>
+<script src="/js/viewer.js?v=20260714"></script>
 <script src="/js/payment.js"></script>
-<script src="/js/app.js"></script>
+<script src="/js/ligand_upload.js?v=20260714"></script>
+<script src="/js/app.js?v=20260714c"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
 </html>

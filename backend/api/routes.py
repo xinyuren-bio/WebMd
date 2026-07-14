@@ -2,18 +2,30 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Depends
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from config import (
-    TASKS_DIR, DEFAULT_PARAMS,
-    PAYMENT_ENABLED, PAYMENT_AMOUNT, PAYMENT_QR_URL, PAYMENT_CURRENCY,
-    TIP_ENABLED, TIP_QR_URL,
+    TASKS_DIR, DEFAULT_PARAMS, MD_MAX_NS, SITE_BASE_URL, ALLOWED_SIM_NS,
+    PAYMENT_ENABLED, PAYMENT_AMOUNT, PAYMENT_QR_URL, WECHAT_QR_URL, PAYMENT_CURRENCY,
+    TIP_ENABLED, TIP_QR_URL, ANALYTICS_FILE, AUTODL_MARKET_URL, MD_CALLBACK_SECRET,
 )
-from payment_util import calc_payment_amount, verify_admin_key
+from payment_util import calc_payment_amount, verify_admin_key, price_for_sim_ns, qr_urls_for_sim_ns
+from analytics_util import record_visit, get_analytics_stats
+from email_util import send_admin_payment_notify, send_admin_need_autodl_notify, send_admin_md_completed_notify, send_user_md_completed_notify
+from user_store import get_user_by_id, count_users, list_recent_users
+from config import USERS_DB
+from api.deps import get_current_user
 from models import Task, TaskStatus, tasks
 from engine.pipeline import run_pipeline
+from engine.autodl_runner import (
+    submit_md_job, dispatch_queued_jobs, pull_analysis_from_remote,
+    pull_deliverables_from_remote, finalize_md_delivery,
+)
+from ssh_util import parse_ssh_command
 from engine.structure_export import ensure_complex_pdb
 from engine.ligand_ff import ensure_ligand_forcefield_json, _find_gaff_mol2
 
@@ -35,7 +47,7 @@ class TaskLogHandler(logging.Handler):
             self.task.log_lines = self.task.log_lines[-500:]
 
 
-def _execute_task(task_id: str, pdb_path: str, mol2_path: str, params: dict):
+def _execute_task(task_id: str, pdb_path: str, mol2_paths: list[str], params: dict):
     """后台执行任务。"""
     task = tasks.get(task_id)
     if not task:
@@ -54,10 +66,13 @@ def _execute_task(task_id: str, pdb_path: str, mol2_path: str, params: dict):
 
     try:
         output_file = run_pipeline(
-            task.work_dir, pdb_path, mol2_path, params, update_status
+            task.work_dir, pdb_path, mol2_paths, params, update_status
         )
         task.output_file = output_file
         task.status = TaskStatus.COMPLETED
+        from gro_util import count_gro_atoms
+        gro_p = Path(task.work_dir) / "system.gro"
+        task.atom_count = count_gro_atoms(gro_p)
     except Exception as e:
         task.status = TaskStatus.FAILED
         task.error_message = str(e)
@@ -67,11 +82,54 @@ def _execute_task(task_id: str, pdb_path: str, mol2_path: str, params: dict):
         task.save()
 
 
+def _task_owner_or_404(task_id: str, user: dict) -> Task:
+    """校验任务存在且属于当前用户。"""
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.user_id and task.user_id != user["user_id"]:
+        raise HTTPException(status_code=403, detail="无权访问该任务")
+    return task
+
+
+def _payment_payload(task: Task) -> dict:
+    """组装任务支付信息（金额与收款码随模拟时长变化）。"""
+    sim_ns = float(task.params.get("simulation_time_ns", 100))
+    base = price_for_sim_ns(sim_ns)
+    qr_url, wechat_qr_url = qr_urls_for_sim_ns(sim_ns)
+
+    if task.payment_status in ("pending", "paid") and task.payment_amount is not None:
+        amount = task.payment_amount
+    else:
+        amount = calc_payment_amount(task.task_id, base, task.user_id)
+        if task.payment_amount is None:
+            task.payment_amount = amount
+            task.save()
+
+    return {
+        "task_id": task.task_id,
+        "user_id": task.user_id,
+        "paid": task.paid,
+        "paid_at": task.paid_at,
+        "payment_status": task.payment_status,
+        "payment_amount": amount,
+        "payment_claimed_at": task.payment_claimed_at,
+        "amount": amount,
+        "simulation_time_ns": sim_ns,
+        "currency": PAYMENT_CURRENCY,
+        "qr_url": qr_url,
+        "wechat_qr_url": wechat_qr_url,
+    }
+
+
 @router.post("/tasks")
 async def create_task(
     background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
     pdb_file: UploadFile = File(...),
     mol2_file: UploadFile = File(...),
+    mol2_file_2: Optional[UploadFile] = File(None),
+    mol2_file_3: Optional[UploadFile] = File(None),
     temperature: float = Form(default=DEFAULT_PARAMS["temperature"]),
     pressure: float = Form(default=DEFAULT_PARAMS["pressure"]),
     timestep: float = Form(default=DEFAULT_PARAMS["timestep"]),
@@ -83,20 +141,49 @@ async def create_task(
     tau_t: float = Form(default=DEFAULT_PARAMS["tau_t"]),
     tau_p: float = Form(default=DEFAULT_PARAMS["tau_p"]),
     report_interval_ps: float = Form(default=DEFAULT_PARAMS["report_interval_ps"]),
+    ligand_add_hydrogens: str = Form(default="1"),
 ):
-    """创建新的 GROMACS MD 前处理任务。"""
+    """创建新的 GROMACS MD 前处理任务（需登录）。"""
+    if simulation_time_ns not in ALLOWED_SIM_NS:
+        raise HTTPException(status_code=400, detail="模拟时长仅支持 10 ns、100 ns 或 200 ns")
+
+    if simulation_time_ns > MD_MAX_NS:
+        raise HTTPException(status_code=400, detail=f"模拟时长不能超过 {MD_MAX_NS} ns")
+
+    # 配体补氢开关：表单 "1"/"true"/"on" 为开启（默认开）
+    add_h = ligand_add_hydrogens.strip().lower() not in ("0", "false", "no", "off")
+
     task = Task()
+    task.user_id = user["user_id"]
     task_id = task.task_id
 
     work_dir = Path(TASKS_DIR) / task_id
     work_dir.mkdir(parents=True, exist_ok=True)
 
     pdb_path = work_dir / pdb_file.filename
-    mol2_path = work_dir / mol2_file.filename
     with open(pdb_path, "wb") as f:
         f.write(await pdb_file.read())
-    with open(mol2_path, "wb") as f:
-        f.write(await mol2_file.read())
+
+    mol2_paths: list[str] = []
+    seen_names: set[str] = set()
+    for idx, up in enumerate([mol2_file, mol2_file_2, mol2_file_3], 1):
+        if up is None or not up.filename:
+            continue
+        fname = Path(up.filename).name
+        if not fname.lower().endswith(".mol2"):
+            raise HTTPException(status_code=400, detail=f"配体 {idx} 须为 MOL2 格式")
+        if fname in seen_names:
+            raise HTTPException(status_code=400, detail=f"配体文件名重复: {fname}")
+        seen_names.add(fname)
+        dest = work_dir / fname
+        with open(dest, "wb") as f:
+            f.write(await up.read())
+        mol2_paths.append(str(dest))
+
+    if not mol2_paths:
+        raise HTTPException(status_code=400, detail="至少上传一个 MOL2 配体文件")
+    if len(mol2_paths) > 3:
+        raise HTTPException(status_code=400, detail="最多支持 3 个配体")
 
     params = {
         "temperature": temperature,
@@ -110,6 +197,7 @@ async def create_task(
         "tau_t": tau_t,
         "tau_p": tau_p,
         "report_interval_ps": report_interval_ps,
+        "ligand_add_hydrogens": add_h,
     }
 
     task.work_dir = str(work_dir)
@@ -117,42 +205,36 @@ async def create_task(
     tasks[task_id] = task
     task.save()
 
-    background_tasks.add_task(_execute_task, task_id, str(pdb_path), str(mol2_path), params)
+    background_tasks.add_task(_execute_task, task_id, str(pdb_path), mol2_paths, params)
 
     logger.info("任务 %s 已创建", task_id)
     return task.to_dict()
 
 
 @router.get("/tasks/{task_id}")
-async def get_task(task_id: str):
-    task = tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+async def get_task(task_id: str, user: dict = Depends(get_current_user)):
+    task = _task_owner_or_404(task_id, user)
     return task.to_dict()
 
 
-def _payment_payload(task: Task) -> dict:
-    """组装任务支付信息。"""
-    amount = task.payment_amount or calc_payment_amount(task.task_id, PAYMENT_AMOUNT)
-    if task.payment_amount is None:
-        task.payment_amount = amount
-        task.save()
-    return {
-        "task_id": task.task_id,
-        "paid": task.paid,
-        "paid_at": task.paid_at,
-        "payment_status": task.payment_status,
-        "payment_amount": amount,
-        "payment_claimed_at": task.payment_claimed_at,
-        "amount": amount,
-        "currency": PAYMENT_CURRENCY,
-        "qr_url": PAYMENT_QR_URL,
-    }
+@router.get("/tasks/{task_id}/public")
+async def get_task_public(task_id: str):
+    """公开任务状态（扫码查看，无需登录）。"""
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    d = task.to_public_dict()
+    if d.get("payment_amount") is None:
+        sim_ns = float(task.params.get("simulation_time_ns", 100))
+        d["payment_amount"] = calc_payment_amount(task.task_id, price_for_sim_ns(sim_ns), task.user_id)
+    return d
 
 
 @router.get("/payment/config")
 async def get_payment_config():
     """返回付费/打赏配置。"""
+    from payment_util import pricing_table
+
     tip_on = TIP_ENABLED and not PAYMENT_ENABLED
     return {
         "enabled": PAYMENT_ENABLED,
@@ -160,16 +242,17 @@ async def get_payment_config():
         "amount": PAYMENT_AMOUNT,
         "currency": PAYMENT_CURRENCY,
         "qr_url": PAYMENT_QR_URL,
+        "wechat_qr_url": WECHAT_QR_URL,
         "tip_qr_url": TIP_QR_URL,
         "verify_mode": "manual",
+        "md_max_ns": MD_MAX_NS,
+        "pricing": pricing_table(),
     }
 
 
 @router.get("/tasks/{task_id}/payment")
-async def get_task_payment(task_id: str):
-    task = tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+async def get_task_payment(task_id: str, user: dict = Depends(get_current_user)):
+    task = _task_owner_or_404(task_id, user)
     return _payment_payload(task)
 
 
@@ -177,26 +260,39 @@ async def get_task_payment(task_id: str):
 async def confirm_task_payment(
     task_id: str,
     payer_note: str = Form(default=""),
+    user: dict = Depends(get_current_user),
 ):
     """用户声明已支付，进入待核实状态（需管理员确认后才可下载）。"""
     if not PAYMENT_ENABLED:
-        raise HTTPException(status_code=403, detail="付费下载功能未开启")
-    task = tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+        raise HTTPException(status_code=403, detail="付费功能未开启")
+    task = _task_owner_or_404(task_id, user)
     if task.status != TaskStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail="任务尚未完成，暂不可支付下载")
+        raise HTTPException(status_code=400, detail="前处理尚未完成，暂不可支付")
     if task.paid or task.payment_status == "paid":
         return _payment_payload(task)
     if task.payment_status == "pending":
         return _payment_payload(task)
 
-    task.payment_amount = calc_payment_amount(task.task_id, PAYMENT_AMOUNT)
+    task.payment_amount = calc_payment_amount(
+        task.task_id,
+        price_for_sim_ns(float(task.params.get("simulation_time_ns", 100))),
+        task.user_id,
+    )
     task.payment_status = "pending"
     task.payment_claimed_at = time.time()
     task.payment_note = (payer_note or "").strip()[:120]
     task.save()
     logger.info("任务 %s 支付待核实，金额 ¥%.2f", task_id, task.payment_amount)
+
+    send_admin_payment_notify(
+        task_id=task_id,
+        user_id=task.user_id,
+        user_email=user.get("email", ""),
+        amount=task.payment_amount,
+        sim_ns=float(task.params.get("simulation_time_ns", 0)),
+        note=task.payment_note,
+        site_base=SITE_BASE_URL.rstrip("/"),
+    )
     return _payment_payload(task)
 
 
@@ -209,20 +305,32 @@ async def list_pending_payments(admin_key: str = ""):
     pending = []
     for t in tasks.values():
         if t.payment_status == "pending":
+            u = get_user_by_id(Path(USERS_DB), t.user_id) if t.user_id else None
             pending.append({
                 "task_id": t.task_id,
-                "payment_amount": t.payment_amount or calc_payment_amount(t.task_id, PAYMENT_AMOUNT),
+                "user_id": t.user_id,
+                "user_email": u.get("email") if u else "",
+                "payment_amount": t.payment_amount or calc_payment_amount(
+                    t.task_id,
+                    price_for_sim_ns(float(t.params.get("simulation_time_ns", 100))),
+                    t.user_id,
+                ),
                 "payment_claimed_at": t.payment_claimed_at,
                 "payment_note": t.payment_note,
                 "created_at": t.created_at,
+                "simulation_time_ns": t.params.get("simulation_time_ns"),
             })
     pending.sort(key=lambda x: x.get("payment_claimed_at") or 0, reverse=True)
     return {"items": pending}
 
 
 @router.post("/admin/payments/{task_id}/approve")
-async def approve_task_payment(task_id: str, admin_key: str = ""):
-    """管理员：核实到账后批准下载。"""
+async def approve_task_payment(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    admin_key: str = "",
+):
+    """管理员：核实到账后批准下载，并排队提交 AutoDL。"""
     if not verify_admin_key(admin_key):
         raise HTTPException(status_code=403, detail="管理员密钥无效")
 
@@ -236,21 +344,282 @@ async def approve_task_payment(task_id: str, admin_key: str = ""):
     task.paid_at = time.time()
     task.payment_status = "paid"
     if not task.payment_amount:
-        task.payment_amount = calc_payment_amount(task.task_id, PAYMENT_AMOUNT)
+        task.payment_amount = calc_payment_amount(
+            task.task_id,
+            price_for_sim_ns(float(task.params.get("simulation_time_ns", 100))),
+            task.user_id,
+        )
+    if task.md_status in ("none", "failed"):
+        task.md_status = "queued"
     task.save()
-    logger.info("任务 %s 支付已核实通过", task_id)
+    logger.info("任务 %s 支付已核实通过，MD 排队", task_id)
+
+    background_tasks.add_task(_dispatch_after_approve, task_id)
+
     return _payment_payload(task)
 
 
-@router.get("/tasks/{task_id}/download")
-async def download_task(task_id: str):
+def _dispatch_after_approve(task_id: str) -> None:
+    """核实通过后发邮件通知管理员开 AutoDL；若已配置 SSH 则自动提交。"""
+    task = tasks.get(task_id)
+    if not task:
+        return
+
+    if not task.atom_count and task.work_dir:
+        from gro_util import count_gro_atoms
+        task.atom_count = count_gro_atoms(Path(task.work_dir) / "system.gro")
+        task.save()
+
+    u = get_user_by_id(Path(USERS_DB), task.user_id) if task.user_id else None
+    send_admin_need_autodl_notify(
+        task_id=task_id,
+        user_email=u.get("email", "") if u else "",
+        atom_count=task.atom_count,
+        sim_ns=float(task.params.get("simulation_time_ns", 0)),
+        ssh_host=task.autodl_ssh_host,
+        site_base=SITE_BASE_URL.rstrip("/"),
+        market_url=AUTODL_MARKET_URL,
+    )
+
+    if task.autodl_ssh_host and task.autodl_ssh_password:
+        submit_md_job(task_id)
+    dispatch_queued_jobs()
+
+
+class AutodlSshBody(BaseModel):
+    ssh_command: str = Field(min_length=8, max_length=300)
+    password: str = Field(min_length=1, max_length=200)
+    server_id: str = Field(min_length=1, max_length=64, description="AutoDL 实例 ID，便于完成后关机")
+
+
+@router.post("/admin/payments/{task_id}/reject")
+async def reject_task_payment(task_id: str, admin_key: str = "", reason: str = ""):
+    """管理员：驳回付款申请，用户可重新支付。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+
     task = tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    if task.payment_status != "pending":
+        raise HTTPException(status_code=400, detail="该任务不在待核实状态")
+
+    note = (reason or "").strip()[:80]
+    if note:
+        task.payment_note = f"{task.payment_note} [驳回:{note}]".strip()[:120]
+
+    task.paid = False
+    task.paid_at = None
+    task.payment_status = "unpaid"
+    task.payment_claimed_at = None
+    task.save()
+    logger.info("任务 %s 支付核实被驳回", task_id)
+    return {"ok": True, "task_id": task_id, "payment_status": "unpaid"}
+
+
+@router.post("/admin/md/{task_id}/dispatch")
+async def admin_dispatch_md(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    admin_key: str = "",
+):
+    """管理员：手动触发 AutoDL 提交（用于 SSH 配置后重试排队任务）。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.payment_status != "paid":
+        raise HTTPException(status_code=400, detail="任务尚未支付核实")
+    if task.md_status == "running":
+        raise HTTPException(status_code=400, detail="MD 已在运行中")
+    if task.md_status == "completed":
+        raise HTTPException(status_code=400, detail="MD 已完成")
+
+    task.md_status = "queued"
+    task.save()
+
+    background_tasks.add_task(_dispatch_after_approve, task_id)
+
+    return {"ok": True, "task_id": task_id, "md_status": "queued"}
+
+
+@router.get("/admin/md/queue")
+async def admin_md_queue(admin_key: str = ""):
+    """管理员：查看 MD 排队/运行中的任务。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+
+    items = []
+    for t in tasks.values():
+        if t.payment_status == "paid" and t.md_status in ("queued", "running", "failed"):
+            u = get_user_by_id(Path(USERS_DB), t.user_id) if t.user_id else None
+            items.append({
+                "task_id": t.task_id,
+                "user_email": u.get("email") if u else "",
+                "md_status": t.md_status,
+                "md_status_label": t.to_public_dict().get("md_status_label", t.md_status),
+                "simulation_time_ns": t.params.get("simulation_time_ns"),
+                "atom_count": t.atom_count,
+                "ssh_configured": bool(t.autodl_ssh_host and t.autodl_ssh_password),
+                "ssh_host": t.autodl_ssh_host or "",
+                "ssh_port": t.autodl_ssh_port,
+                "ssh_command": t.autodl_ssh_command or "",
+                "server_id": t.autodl_server_id or "",
+                "error_message": t.error_message,
+            })
+    items.sort(key=lambda x: x["task_id"])
+    return {"items": items, "market_url": AUTODL_MARKET_URL}
+
+
+@router.post("/admin/tasks/{task_id}/autodl")
+async def save_task_autodl_ssh(
+    task_id: str,
+    body: AutodlSshBody,
+    background_tasks: BackgroundTasks,
+    admin_key: str = "",
+):
+    """管理员：为任务配置 AutoDL SSH，保存后自动提交 MD。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.payment_status != "paid":
+        raise HTTPException(status_code=400, detail="任务尚未支付核实")
+
+    try:
+        parsed = parse_ssh_command(body.ssh_command)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    task.autodl_ssh_command = body.ssh_command.strip()
+    task.autodl_ssh_host = parsed["host"]
+    task.autodl_ssh_port = parsed["port"]
+    task.autodl_ssh_user = parsed["user"]
+    task.autodl_ssh_password = body.password
+    task.autodl_server_id = body.server_id.strip()
+    if task.md_status in ("none", "failed"):
+        task.md_status = "queued"
+    task.save()
+
+    background_tasks.add_task(submit_md_job, task_id)
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "ssh_host": task.autodl_ssh_host,
+        "ssh_port": task.autodl_ssh_port,
+        "server_id": task.autodl_server_id,
+        "md_status": task.md_status,
+    }
+
+
+@router.post("/tasks/{task_id}/md-callback")
+async def md_completion_callback(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    key: str = "",
+    status: str = "completed",
+    summary: UploadFile = File(None),
+    sim_zip: UploadFile = File(None),
+    analysis_zip: UploadFile = File(None),
+):
+    """远程 run_md.sh 完成后的回调（无需登录，密钥校验）。"""
+    if key != MD_CALLBACK_SECRET:
+        raise HTTPException(status_code=403, detail="无效回调密钥")
+
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    deliver_dir = Path(task.work_dir) / "md_deliverables"
+    deliver_dir.mkdir(parents=True, exist_ok=True)
+
+    async def _存压缩包(uf: UploadFile | None, name: str) -> str:
+        if uf is None:
+            return ""
+        try:
+            raw = await uf.read()
+            if len(raw) < 512:
+                return ""
+            p = deliver_dir / name
+            p.write_bytes(raw)
+            return str(p)
+        except OSError:
+            return ""
+
+    text = ""
+    if summary is not None:
+        try:
+            raw = await summary.read()
+            text = raw.decode("utf-8", errors="replace")[:8000]
+        except OSError:
+            pass
+
+    # 回调上传的 zip 常为空，正式交付改由 SSH 拉取
+    task.md_sim_zip = await _存压缩包(sim_zip, "simulation_deliverables.zip")
+    task.md_analysis_zip = await _存压缩包(analysis_zip, "analysis_deliverables.zip")
+
+    if not text:
+        text = pull_analysis_from_remote(task)
+
+    task.analysis_summary = text
+    task.md_status = "failed" if status == "failed" else "completed"
+    task.md_completed_at = time.time()
+    task.save()
+
+    u = get_user_by_id(Path(USERS_DB), task.user_id) if task.user_id else None
+    user_email = u.get("email", "") if u else ""
+    failed = task.md_status == "failed"
+
+    if failed:
+        send_admin_md_completed_notify(
+            task_id=task_id,
+            user_email=user_email,
+            ssh_host=task.autodl_ssh_host,
+            ssh_port=int(task.autodl_ssh_port or 22),
+            server_id=task.autodl_server_id,
+            analysis_summary=text,
+            site_base=SITE_BASE_URL.rstrip("/"),
+        )
+        send_user_md_completed_notify(
+            user_email=user_email,
+            task_id=task_id,
+            analysis_summary=text,
+            site_base=SITE_BASE_URL.rstrip("/"),
+            md_failed=True,
+        )
+    else:
+        # 成功：后台 SSH 拉取压缩包后再发邮件（含附件）
+        background_tasks.add_task(finalize_md_delivery, task_id)
+
+    return {"ok": True, "task_id": task_id, "md_status": task.md_status}
+
+
+@router.post("/admin/tasks/{task_id}/resend-delivery")
+async def admin_resend_delivery(task_id: str, admin_key: str = "", background_tasks: BackgroundTasks = None):
+    """管理员：重新拉取压缩包并发送用户交付邮件。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.md_status != "completed":
+        raise HTTPException(status_code=400, detail="任务 MD 尚未完成")
+    background_tasks.add_task(finalize_md_delivery, task_id)
+    return {"ok": True, "task_id": task_id, "message": "已触发重新拉取并发送交付邮件"}
+
+
+@router.get("/tasks/{task_id}/download")
+async def download_task(task_id: str, user: dict = Depends(get_current_user)):
+    task = _task_owner_or_404(task_id, user)
     if task.status != TaskStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="任务尚未完成")
     if PAYMENT_ENABLED and (not task.paid or task.payment_status != "paid"):
-        raise HTTPException(status_code=402, detail="支付核实中或尚未支付，暂不可下载")
+        raise HTTPException(status_code=402, detail="请先完成支付并等待核实通过后再下载")
     if not task.output_file or not Path(task.output_file).exists():
         raise HTTPException(status_code=400, detail="输出文件不存在")
 
@@ -261,11 +630,45 @@ async def download_task(task_id: str):
     )
 
 
+def _md_download_guard(task: Task) -> None:
+    """MD 交付物下载前置检查。"""
+    if task.md_status != "completed":
+        raise HTTPException(status_code=400, detail="MD 模拟尚未完成")
+    if PAYMENT_ENABLED and (not task.paid or task.payment_status != "paid"):
+        raise HTTPException(status_code=402, detail="请先完成支付并等待核实通过后再下载")
+
+
+@router.get("/tasks/{task_id}/download/md-simulation")
+async def download_md_simulation(task_id: str, user: dict = Depends(get_current_user)):
+    """下载 MD 模拟数据包（ndx/top/tpr/pdb/xtc）。"""
+    task = _task_owner_or_404(task_id, user)
+    _md_download_guard(task)
+    if not task.md_sim_zip or not Path(task.md_sim_zip).is_file():
+        raise HTTPException(status_code=404, detail="模拟数据包尚未生成")
+    return FileResponse(
+        task.md_sim_zip,
+        media_type="application/zip",
+        filename=f"{task_id}_simulation.zip",
+    )
+
+
+@router.get("/tasks/{task_id}/download/md-analysis")
+async def download_md_analysis(task_id: str, user: dict = Depends(get_current_user)):
+    """下载 MD 分析结果包（CSV + 图片）。"""
+    task = _task_owner_or_404(task_id, user)
+    _md_download_guard(task)
+    if not task.md_analysis_zip or not Path(task.md_analysis_zip).is_file():
+        raise HTTPException(status_code=404, detail="分析结果包尚未生成")
+    return FileResponse(
+        task.md_analysis_zip,
+        media_type="application/zip",
+        filename=f"{task_id}_analysis.zip",
+    )
+
+
 @router.get("/tasks/{task_id}/logs")
-async def get_task_logs(task_id: str):
-    task = tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+async def get_task_logs(task_id: str, user: dict = Depends(get_current_user)):
+    task = _task_owner_or_404(task_id, user)
     return {"logs": task.log_lines}
 
 
@@ -324,3 +727,49 @@ async def get_ligand_mol2(task_id: str):
         media_type="chemical/x-mol2",
         filename="ligand_gaff.mol2",
     )
+
+
+class VisitBody(BaseModel):
+    path: str = "/"
+
+
+def _client_ip(r: Request) -> str:
+    """从请求头获取客户端 IP（兼容反向代理）。"""
+    xff = r.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    if r.client:
+        return r.client.host or "unknown"
+    return "unknown"
+
+
+@router.post("/analytics/visit")
+async def track_visit(r: Request, body: VisitBody):
+    """记录页面访问（前端上报，不含个人身份信息）。"""
+    record_visit(
+        Path(ANALYTICS_FILE),
+        body.path,
+        _client_ip(r),
+        r.headers.get("user-agent", ""),
+    )
+    return {"ok": True}
+
+
+@router.get("/admin/analytics/stats")
+async def admin_analytics_stats(admin_key: str = ""):
+    """管理员：查看访问统计。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+    return get_analytics_stats(Path(ANALYTICS_FILE))
+
+
+@router.get("/admin/users/stats")
+async def admin_users_stats(admin_key: str = ""):
+    """管理员：查看注册用户统计。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+    db = Path(USERS_DB)
+    return {
+        "total": count_users(db),
+        "recent": list_recent_users(db, limit=50),
+    }
