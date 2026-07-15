@@ -64,6 +64,55 @@ body {
   border-bottom: 1px solid var(--color-border);
 }
 
+/* ---- 站点顶栏公告 ---- */
+.site-announcement {
+  background: #ecf6f4;
+  border-bottom: 1px solid #c5e4de;
+  color: #134e4a;
+}
+
+.site-announcement-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 10px 32px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.site-announcement-text {
+  margin: 0;
+  flex: 1;
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.site-announcement-text strong {
+  margin-right: 0.5em;
+  color: #0f766e;
+}
+
+.site-announcement-close {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #3f6f6a;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.site-announcement-close:hover {
+  color: #134e4a;
+}
+
+@media (max-width: 640px) {
+  .site-announcement-inner {
+    padding: 10px 16px;
+  }
+}
+
 .site-header-inner {
   display: flex;
   align-items: center;
