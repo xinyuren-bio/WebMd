@@ -230,19 +230,57 @@ def _upload_and_run(t: Task) -> None:
             _append_log(t, f"解压 stderr: {extract_err[:200]}")
 
         _append_log(t, "解压完成，后台启动 run_md.sh …")
-        # stdin 重定向 + 单独 echo，确保 SSH 通道可立即关闭
+        # 用 setsid 完全脱离 SSH 会话；启动后单独探活，避免 stdout.read 阻塞误判失败
         run_cmd = (
             f"cd {remote_base} && "
-            f"nohup bash run_md.sh > md_remote.log 2>&1 </dev/null & "
-            f"echo $!"
+            f"(setsid bash -c 'nohup bash run_md.sh > md_remote.log 2>&1 </dev/null &' "
+            f"> /dev/null 2>&1 &); echo STARTED"
         )
-        _, stdout, stderr = cli.exec_command(run_cmd, timeout=60)
-        out = stdout.read().decode("utf-8", errors="replace").strip()
-        err = stderr.read().decode("utf-8", errors="replace").strip()
-        if err:
-            _append_log(t, f"远程 stderr: {err[:200]}")
-        if out:
-            _append_log(t, f"远程进程 PID: {out}")
+        try:
+            _, stdout, stderr = cli.exec_command(run_cmd, timeout=120)
+            # 只读有限输出，避免通道挂起
+            stdout.channel.settimeout(30)
+            out = stdout.read(256).decode("utf-8", errors="replace").strip()
+            err = stderr.read(512).decode("utf-8", errors="replace").strip()
+            if err:
+                _append_log(t, f"远程 stderr: {err[:200]}")
+            if out:
+                _append_log(t, f"远程启动回执: {out}")
+        except TimeoutError:
+            # 启动命令读超时：常见于 nohup 后通道未立刻关闭，需探活再决定是否失败
+            _append_log(t, "启动命令读超时，正在确认远程是否已在运行…")
+
+        # 探活：run_md / mdrun / md.tpr / md_remote.log 任一成立即视为提交成功
+        time.sleep(2)
+        probe = (
+            f"pgrep -af 'run_md.sh|gmx mdrun|mdrun' | grep -F '{t.task_id}' | head -5; "
+            f"test -f {remote_base}/md.tpr && echo HAS_TPR; "
+            f"test -s {remote_base}/md_remote.log && echo HAS_LOG; "
+            f"wc -c < {remote_base}/md_remote.log 2>/dev/null || echo 0"
+        )
+        try:
+            _, pso, _ = cli.exec_command(probe, timeout=60)
+            pso.channel.settimeout(30)
+            probe_out = pso.read().decode("utf-8", errors="replace").strip()
+        except TimeoutError as e:
+            raise TimeoutError(
+                "启动后探活也超时，请到 AutoDL 确认是否已在跑 MD"
+            ) from e
+        _append_log(t, f"远程探活: {probe_out.replace(chr(10), ' | ')[:300]}")
+        ok = bool(
+            probe_out
+            and (
+                "run_md" in probe_out
+                or "mdrun" in probe_out
+                or "HAS_TPR" in probe_out
+                or "HAS_LOG" in probe_out
+            )
+        )
+        if not ok:
+            raise RuntimeError(
+                "远程未检测到 MD 进程或日志，提交可能未成功。"
+                f" 探活输出: {probe_out[:300]}"
+            )
         _append_log(t, f"已在 AutoDL ({host}) 后台启动 MD")
     finally:
         cli.close()
