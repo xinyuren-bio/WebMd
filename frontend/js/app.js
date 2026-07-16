@@ -221,22 +221,24 @@
         var checked = defaultProt.some(function (p) {
           return p.chain === c.chain;
         });
+        var seq =
+          c.resnames_head && c.resnames_head.length
+            ? " · " + c.resnames_head.join("-")
+            : "";
         return (
-          '<label><input type="checkbox" name="protein-chain" value="' +
+          '<label class="chain-option"><input type="checkbox" name="protein-chain" value="' +
           key +
           '"' +
           (checked ? " checked" : "") +
-          "> 链 <code>" +
+          '><span class="chain-option-text">链 <code>' +
           c.label +
           "</code> · " +
           c.n_residues +
           " 残基 / " +
           c.n_atoms +
           " 原子" +
-          (c.resnames_head && c.resnames_head.length
-            ? " · " + c.resnames_head.join("-")
-            : "") +
-          "</label>"
+          seq +
+          "</span></label>"
         );
       })
       .join("");
@@ -246,17 +248,17 @@
         var key = chainKey(c.chain);
         var checked = c.chain === defaultPep.chain;
         return (
-          '<label><input type="radio" name="peptide-chain" value="' +
+          '<label class="chain-option"><input type="radio" name="peptide-chain" value="' +
           key +
           '"' +
           (checked ? " checked" : "") +
-          "> 链 <code>" +
+          '><span class="chain-option-text">链 <code>' +
           c.label +
           "</code> · " +
           c.n_residues +
           " 残基 / " +
           c.n_atoms +
-          " 原子</label>"
+          " 原子</span></label>"
         );
       })
       .join("");
