@@ -32,7 +32,11 @@ from config import USERS_DB
 from api.deps import get_current_user
 from models import Task, TaskStatus, tasks
 from engine.pipeline import run_pipeline
-from engine.ligand_charge import ChargeConfirmNeeded
+from engine.ligand_charge import (
+    ChargeConfirmNeeded,
+    collect_charge_failure_diagnostics,
+    resolve_ligand_work_subdir,
+)
 from engine.autodl_runner import (
     submit_md_job, dispatch_queued_jobs, pull_analysis_from_remote,
     pull_deliverables_from_remote, finalize_md_delivery,
@@ -131,6 +135,42 @@ def _task_owner_or_404(task_id: str, user: dict) -> Task:
     if task.user_id and task.user_id != user["user_id"]:
         raise HTTPException(status_code=403, detail="无权访问该任务")
     return task
+
+
+def _enrich_charge_confirm(task: Task) -> dict | None:
+    """补全 charge_confirm 诊断字段（兼容旧任务，从工作目录回填）。"""
+    conf = dict(task.params.get("charge_confirm") or {})
+    if not conf and task.status != TaskStatus.AWAITING_CHARGE_CONFIRM:
+        return None
+    if not conf:
+        conf = {
+            "ligand_index": 1,
+            "ligand_name": "",
+            "original_charge": None,
+            "working_charges": [],
+            "message": task.error_message or "请确认配体净电荷",
+        }
+    has_log = bool(conf.get("sqm_excerpt") or conf.get("antechamber_excerpt"))
+    if has_log and conf.get("diagnosis_key"):
+        return conf
+    sub = resolve_ligand_work_subdir(
+        task.work_dir,
+        int(conf.get("ligand_index") or 1),
+        str(conf.get("ligand_name") or ""),
+    )
+    if not sub:
+        conf.setdefault("diagnosis_key", "unknown")
+        conf.setdefault("diagnosis_label", "未归类（工作目录中未找到配体日志）")
+        conf.setdefault("sqm_excerpt", "（无 sqm.out）")
+        conf.setdefault("antechamber_excerpt", "（无 antechamber 日志）")
+        return conf
+    diag = collect_charge_failure_diagnostics(sub)
+    conf["diagnosis_key"] = diag["diagnosis_key"]
+    conf["diagnosis_label"] = diag["diagnosis_label"]
+    conf["sqm_excerpt"] = diag["sqm_excerpt"]
+    conf["antechamber_excerpt"] = diag["antechamber_excerpt"]
+    conf["ligand_subdir"] = sub.name
+    return conf
 
 
 def _payment_payload(task: Task) -> dict:
@@ -433,7 +473,12 @@ async def list_my_tasks(
 @router.get("/tasks/{task_id}")
 async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     task = _task_owner_or_404(task_id, user)
-    return task.to_dict()
+    data = task.to_dict()
+    if task.status == TaskStatus.AWAITING_CHARGE_CONFIRM:
+        enriched = _enrich_charge_confirm(task)
+        if enriched:
+            data["charge_confirm"] = enriched
+    return data
 
 
 class ChargeConfirmBody(BaseModel):
@@ -441,6 +486,9 @@ class ChargeConfirmBody(BaseModel):
 
     ligand_index: int = Field(..., ge=1, le=3)
     charge: int
+    # 用户确认已阅读失败诊断日志
+    ack_diagnosis: bool = False
+    diagnosis_key: str = ""
 
 
 @router.post("/tasks/{task_id}/confirm-charge")
@@ -454,12 +502,31 @@ async def confirm_ligand_charge(
     task = _task_owner_or_404(task_id, user)
     if task.status != TaskStatus.AWAITING_CHARGE_CONFIRM:
         raise HTTPException(status_code=400, detail="当前任务不需要确认净电荷")
-    conf = task.params.get("charge_confirm") or {}
+    conf = _enrich_charge_confirm(task) or dict(task.params.get("charge_confirm") or {})
     allowed = list(conf.get("working_charges") or [])
     if body.charge not in allowed:
         raise HTTPException(
             status_code=400,
             detail=f"请选择提示中的可行净电荷：{allowed}",
+        )
+    # 结构类错误不应仅靠改电荷绕过；仍要求用户勾选已阅读诊断
+    if not body.ack_diagnosis:
+        raise HTTPException(
+            status_code=400,
+            detail="请先查看 sqm.out / antechamber 日志并勾选「已阅读诊断」后再继续",
+        )
+    expected_key = str(conf.get("diagnosis_key") or "unknown")
+    if body.diagnosis_key and body.diagnosis_key != expected_key:
+        raise HTTPException(
+            status_code=400,
+            detail="诊断信息已更新，请刷新后重新确认",
+        )
+    # 非电荷类结构问题：给出明确警告但仍允许在用户确认后继续（探测已成功）
+    struct_keys = {"unrecognized_atom", "bad_geometry", "bond_type"}
+    if expected_key in struct_keys:
+        logger.warning(
+            "任务 %s 诊断为结构类问题(%s)，用户仍确认采用净电荷 %s",
+            task_id, expected_key, body.charge,
         )
     confirmed = dict(task.params.get("confirmed_charges") or {})
     confirmed[str(body.ligand_index)] = body.charge

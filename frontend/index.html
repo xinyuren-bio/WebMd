@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260716j">
+<link rel="stylesheet" href="/css/style.css?v=20260716p">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -943,13 +943,37 @@
 
 <div id="charge-confirm-modal" class="payment-modal hidden" role="dialog" aria-modal="true" aria-labelledby="charge-confirm-title">
   <div class="payment-modal-backdrop" id="charge-confirm-backdrop"></div>
-  <div class="payment-modal-panel">
+  <div class="payment-modal-panel charge-confirm-panel">
     <h3 id="charge-confirm-title">确认配体净电荷</h3>
     <p id="charge-confirm-msg" class="payment-amount-hint"></p>
+    <div id="charge-diag-box" class="charge-diag-box">
+      <p class="charge-diag-title">失败诊断（请先阅读）</p>
+      <p id="charge-diag-label" class="charge-diag-label"></p>
+      <ul class="charge-diag-checklist" id="charge-diag-checklist">
+        <li>SCF did not converge</li>
+        <li>odd number of electrons</li>
+        <li>unrecognized atom</li>
+        <li>bad geometry</li>
+        <li>cannot assign bond type</li>
+      </ul>
+      <details open>
+        <summary>sqm.out 错误末尾</summary>
+        <pre id="charge-diag-sqm" class="charge-diag-log"></pre>
+      </details>
+      <details>
+        <summary>antechamber 完整错误末尾</summary>
+        <pre id="charge-diag-ante" class="charge-diag-log"></pre>
+      </details>
+      <p class="charge-diag-hint">若诊断为结构问题（无法识别原子 / 几何异常 / 键型），建议修正 MOL2 后重新提交，而不是直接改电荷继续。</p>
+    </div>
+    <label class="auth-label charge-ack-label" for="charge-diag-ack">
+      <input type="checkbox" id="charge-diag-ack">
+      <span>我已阅读上方 sqm.out / antechamber 日志，并理解失败原因</span>
+    </label>
     <label class="auth-label" for="charge-confirm-select">采用净电荷</label>
     <select id="charge-confirm-select" class="payment-payer-note"></select>
     <div class="payment-modal-actions">
-      <button type="button" class="btn btn-primary" id="charge-confirm-ok">采用并继续</button>
+      <button type="button" class="btn btn-primary" id="charge-confirm-ok" disabled>采用并继续</button>
       <button type="button" class="btn btn-secondary" id="charge-confirm-cancel">取消</button>
     </div>
     <p class="payment-error hidden" id="charge-confirm-error"></p>
@@ -1025,7 +1049,7 @@
 <script src="/js/viewer.js?v=20260716e"></script>
 <script src="/js/payment.js?v=20260716m"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
-<script src="/js/app.js?v=20260716o"></script>
+<script src="/js/app.js?v=20260716p"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
 </html>

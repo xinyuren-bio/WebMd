@@ -23,6 +23,8 @@ from .env_check import check_external_tools, repair_ambertools, source_amber_env
 from .ligand_charge import (
     ChargeConfirmNeeded,
     ChargeConfirmRequest,
+    build_charge_confirm_message,
+    collect_charge_failure_diagnostics,
     detect_ligand_charge,
     pick_initial_charge,
     probe_working_charges,
@@ -546,6 +548,51 @@ def _read_sqm_hint(lig_dir: Path) -> str:
     return "\n".join(hints[-6:])
 
 
+def _save_antechamber_log(lig_dir: Path, r: subprocess.CompletedProcess, net_charge: int) -> None:
+    """将 antechamber 完整输出写入工作目录，供确认电荷前查阅。"""
+    parts = [
+        f"# antechamber nc={net_charge} returncode={r.returncode}",
+        "----- stdout -----",
+        (r.stdout or "").rstrip(),
+        "----- stderr -----",
+        (r.stderr or "").rstrip(),
+    ]
+    text = "\n".join(parts) + "\n"
+    (lig_dir / "antechamber_last.log").write_text(text, encoding="utf-8")
+    # 失败时额外保留，避免后续探测成功覆盖诊断信息
+    if r.returncode != 0:
+        (lig_dir / "antechamber_fail.log").write_text(text, encoding="utf-8")
+        sqm = lig_dir / "sqm.out"
+        if sqm.is_file():
+            shutil.copy2(sqm, lig_dir / "sqm_fail.out")
+
+
+def _charge_confirm_from_dir(
+    *,
+    lig_dir: Path,
+    ligand_index: int,
+    ligand_name: str,
+    original_charge: int | None,
+    working: list[int],
+) -> ChargeConfirmRequest:
+    """根据工作目录日志组装须用户确认的载荷。"""
+    diag = collect_charge_failure_diagnostics(lig_dir)
+    return ChargeConfirmRequest(
+        ligand_index=ligand_index,
+        ligand_name=ligand_name,
+        original_charge=original_charge,
+        working_charges=working,
+        message=build_charge_confirm_message(
+            diag["diagnosis_label"], working, original_charge,
+        ),
+        diagnosis_key=diag["diagnosis_key"],
+        diagnosis_label=diag["diagnosis_label"],
+        sqm_excerpt=diag["sqm_excerpt"],
+        antechamber_excerpt=diag["antechamber_excerpt"],
+        ligand_subdir=lig_dir.name,
+    )
+
+
 def _run_antechamber(
     mol2_in: Path,
     ac_mol2: Path,
@@ -567,6 +614,7 @@ def _run_antechamber(
     ]
     logger.info("运行 antechamber: %s", " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(lig_dir), env=env)
+    _save_antechamber_log(lig_dir, r, net_charge)
     if r.returncode == 0:
         return True
     err = (r.stderr or r.stdout or "")[-1500:]
@@ -738,15 +786,12 @@ def parameterize_ligand(
 
             working = probe_working_charges(_try, None)
             if working:
-                raise ChargeConfirmNeeded(ChargeConfirmRequest(
+                raise ChargeConfirmNeeded(_charge_confirm_from_dir(
+                    lig_dir=lig_dir,
                     ligand_index=ligand_index,
                     ligand_name=Path(mol2_path).name,
                     original_charge=None,
-                    working_charges=working,
-                    message=(
-                        f"无法自动判断配体净电荷；探测到使用净电荷 "
-                        f"{working[0]} 可以完成计算，是否采用？"
-                    ),
+                    working=working,
                 ))
             raise RuntimeError(
                 "无法判断配体净电荷，且常见电荷均无法完成 AM1-BCC 计算。"
@@ -767,20 +812,12 @@ def parameterize_ligand(
 
         working = probe_working_charges(_try, int(net_charge))
         if working:
-            q0 = working[0]
-            raise ChargeConfirmNeeded(ChargeConfirmRequest(
+            raise ChargeConfirmNeeded(_charge_confirm_from_dir(
+                lig_dir=lig_dir,
                 ligand_index=ligand_index,
                 ligand_name=Path(mol2_path).name,
                 original_charge=int(net_charge),
-                working_charges=working,
-                message=(
-                    f"原电荷（{net_charge}）计算失败，使用净电荷 {q0} 可以完成计算，是否采用？"
-                    + (
-                        f"（另可选：{', '.join(str(x) for x in working[1:])}）"
-                        if len(working) > 1
-                        else ""
-                    )
-                ),
+                working=working,
             ))
         raise RuntimeError(
             f"配体参数化失败（净电荷 {net_charge} 及常见备选均未通过）。"

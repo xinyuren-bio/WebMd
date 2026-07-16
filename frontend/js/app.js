@@ -965,8 +965,27 @@
   var chargeMsg = document.getElementById("charge-confirm-msg");
   var chargeSelect = document.getElementById("charge-confirm-select");
   var chargeErr = document.getElementById("charge-confirm-error");
+  var chargeDiagLabel = document.getElementById("charge-diag-label");
+  var chargeDiagSqm = document.getElementById("charge-diag-sqm");
+  var chargeDiagAnte = document.getElementById("charge-diag-ante");
+  var chargeDiagAck = document.getElementById("charge-diag-ack");
+  var chargeDiagChecklist = document.getElementById("charge-diag-checklist");
   var pendingChargeTaskId = null;
   var pendingChargeLigIndex = 1;
+  var pendingDiagnosisKey = "unknown";
+
+  var DIAG_KEY_TO_TEXT = {
+    scf_not_converge: "SCF did not converge",
+    odd_electrons: "odd number of electrons",
+    unrecognized_atom: "unrecognized atom",
+    bad_geometry: "bad geometry",
+    bond_type: "cannot assign bond type",
+  };
+
+  function syncChargeConfirmOkEnabled() {
+    if (!btnChargeOk) return;
+    btnChargeOk.disabled = !(chargeDiagAck && chargeDiagAck.checked);
+  }
 
   function hideChargeConfirmModal() {
     if (chargeModal) chargeModal.classList.add("hidden");
@@ -974,17 +993,42 @@
       chargeErr.textContent = "";
       chargeErr.classList.add("hidden");
     }
+    if (chargeDiagAck) chargeDiagAck.checked = false;
+    syncChargeConfirmOkEnabled();
+  }
+
+  function highlightDiagChecklist(key) {
+    if (!chargeDiagChecklist) return;
+    var matchText = DIAG_KEY_TO_TEXT[key] || "";
+    var items = chargeDiagChecklist.querySelectorAll("li");
+    items.forEach(function (li) {
+      var hit = matchText && li.textContent.indexOf(matchText) >= 0;
+      li.classList.toggle("is-match", !!hit);
+    });
   }
 
   function showChargeConfirmModal(taskId, task) {
     var info = task.charge_confirm || {};
     pendingChargeTaskId = taskId;
     pendingChargeLigIndex = info.ligand_index || 1;
+    pendingDiagnosisKey = info.diagnosis_key || "unknown";
     if (chargeMsg) {
       chargeMsg.textContent =
         info.message ||
-        "原电荷计算失败，请选择一个可行净电荷后继续。";
+        "请先查看 sqm.out / antechamber 日志，再选择可行净电荷。";
     }
+    if (chargeDiagLabel) {
+      chargeDiagLabel.textContent =
+        "系统判定：" + (info.diagnosis_label || "未归类（请查看下方完整日志）");
+    }
+    if (chargeDiagSqm) {
+      chargeDiagSqm.textContent = info.sqm_excerpt || "（无 sqm.out）";
+    }
+    if (chargeDiagAnte) {
+      chargeDiagAnte.textContent = info.antechamber_excerpt || "（无 antechamber 日志）";
+    }
+    highlightDiagChecklist(pendingDiagnosisKey);
+    if (chargeDiagAck) chargeDiagAck.checked = false;
     if (chargeSelect) {
       chargeSelect.innerHTML = "";
       var opts = info.working_charges || [];
@@ -996,15 +1040,26 @@
         chargeSelect.appendChild(o);
       });
     }
+    syncChargeConfirmOkEnabled();
     if (chargeModal) chargeModal.classList.remove("hidden");
     progressText.textContent = "等待确认配体净电荷";
   }
 
   var btnChargeOk = document.getElementById("charge-confirm-ok");
   var btnChargeCancel = document.getElementById("charge-confirm-cancel");
+  if (chargeDiagAck) {
+    chargeDiagAck.addEventListener("change", syncChargeConfirmOkEnabled);
+  }
   if (btnChargeOk) {
     btnChargeOk.addEventListener("click", async function () {
       if (!pendingChargeTaskId || !chargeSelect) return;
+      if (!chargeDiagAck || !chargeDiagAck.checked) {
+        if (chargeErr) {
+          chargeErr.textContent = "请先勾选「已阅读诊断」后再继续";
+          chargeErr.classList.remove("hidden");
+        }
+        return;
+      }
       try {
         if (chargeErr) chargeErr.classList.add("hidden");
         var resp = await apiFetch(
@@ -1015,6 +1070,8 @@
             body: JSON.stringify({
               ligand_index: pendingChargeLigIndex,
               charge: parseInt(chargeSelect.value, 10),
+              ack_diagnosis: true,
+              diagnosis_key: pendingDiagnosisKey,
             }),
           }
         );

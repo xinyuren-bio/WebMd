@@ -1602,6 +1602,96 @@ body.workspace-guide #app {
   color: var(--color-error);
 }
 
+/* 净电荷确认：诊断日志区 */
+.charge-confirm-panel {
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.charge-diag-box {
+  margin: 12px 0 14px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.charge-diag-title {
+  margin: 0 0 6px;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.charge-diag-label {
+  margin: 0 0 8px;
+  font-size: 0.875rem;
+  color: #b45309;
+  font-weight: 600;
+}
+
+.charge-diag-checklist {
+  margin: 0 0 10px;
+  padding-left: 1.1rem;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.charge-diag-checklist li.is-match {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.charge-diag-box details {
+  margin-top: 8px;
+}
+
+.charge-diag-box summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.charge-diag-log {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  max-height: 160px;
+  overflow: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 6px;
+}
+
+.charge-diag-hint {
+  margin: 10px 0 0;
+  font-size: 0.75rem;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.charge-ack-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 12px;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.charge-ack-label input {
+  margin-top: 2px;
+}
+
 /* ---- Buttons ---- */
 .action-row {
   display: flex;

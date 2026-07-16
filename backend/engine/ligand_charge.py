@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -19,6 +20,35 @@ logger = logging.getLogger(__name__)
 
 # 探测用常见整数电荷（仅寻找可行方案，不得静默采用）
 PROBE_CHARGES = (0, 1, -1, 2, -2, -3, 3, -4, 4)
+
+# 常见 antechamber / sqm 失败模式（用于用户确认前提示）
+_DIAG_RULES: list[tuple[str, str, tuple[str, ...]]] = [
+    (
+        "scf_not_converge",
+        "SCF 未收敛（SCF did not converge）",
+        ("scf did not converge",),
+    ),
+    (
+        "odd_electrons",
+        "奇数电子（odd number of electrons）",
+        ("odd number of electrons",),
+    ),
+    (
+        "unrecognized_atom",
+        "无法识别原子（unrecognized atom）",
+        ("unrecognized atom", "unknown atom type", "cannot use atom type"),
+    ),
+    (
+        "bad_geometry",
+        "几何异常（bad geometry）",
+        ("bad geometry", "distorted geometry", "bond angle"),
+    ),
+    (
+        "bond_type",
+        "无法分配键型（cannot assign bond type）",
+        ("cannot assign bond type", "could not assign bond type", "bondtype"),
+    ),
+]
 
 
 @dataclass
@@ -45,6 +75,12 @@ class ChargeConfirmRequest:
     original_charge: int | None
     working_charges: list[int]
     message: str
+    # 失败诊断：须用户先阅读日志再确认电荷
+    diagnosis_key: str = "unknown"
+    diagnosis_label: str = ""
+    sqm_excerpt: str = ""
+    antechamber_excerpt: str = ""
+    ligand_subdir: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """转为可 JSON 序列化字典。"""
@@ -147,3 +183,109 @@ def probe_working_charges(
             if len(found) >= 2:
                 break
     return found
+
+
+def _safe_ligand_stem(name: str) -> str:
+    """将配体文件名主干清洗为目录名（与 ligand 模块一致）。"""
+    s = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(name).stem).strip("_")
+    return (s or "ligand")[:80]
+
+
+def resolve_ligand_work_subdir(
+    work_dir: Path | str,
+    ligand_index: int,
+    ligand_name: str = "",
+) -> Path | None:
+    """在任务目录中定位配体工作子目录。"""
+    work = Path(work_dir)
+    if ligand_name:
+        p = work / "ligand" / _safe_ligand_stem(ligand_name)
+        if p.is_dir():
+            return p
+    lig_root = work / "ligand"
+    if not lig_root.is_dir():
+        return None
+    subs = sorted(d for d in lig_root.iterdir() if d.is_dir())
+    if not subs:
+        return None
+    idx = max(0, int(ligand_index) - 1)
+    return subs[idx] if idx < len(subs) else subs[0]
+
+
+def _tail_error_lines(text: str, *, max_lines: int = 30) -> str:
+    """提取日志中与失败相关的行；若无则取文件末尾。"""
+    if not text.strip():
+        return ""
+    keys = (
+        "error", "fatal", "failed", "converge", "electron",
+        "qmcharge", "bond", "unrecognized", "geometry",
+    )
+    picked: list[str] = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        low = s.lower()
+        if any(k in low for k in keys):
+            picked.append(s)
+    if picked:
+        return "\n".join(picked[-max_lines:])
+    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
+    return "\n".join(lines[-max_lines:])
+
+
+def collect_charge_failure_diagnostics(lig_dir: Path | str) -> dict[str, Any]:
+    """汇总 sqm.out 与 antechamber 日志末尾，并归类常见失败原因。"""
+    lig = Path(lig_dir)
+    sqm_text = ""
+    # 优先读失败快照，避免探测成功后覆盖原失败日志
+    for name in ("sqm_fail.out", "sqm.out"):
+        fp = lig / name
+        if fp.is_file():
+            sqm_text = fp.read_text(encoding="utf-8", errors="replace")
+            break
+
+    ante_text = ""
+    for name in ("antechamber_fail.log", "antechamber_last.log"):
+        fp = lig / name
+        if fp.is_file():
+            ante_text = fp.read_text(encoding="utf-8", errors="replace")
+            break
+
+    combined = (sqm_text + "\n" + ante_text).lower()
+    diagnosis_key = "unknown"
+    diagnosis_label = "未归类（请查看下方完整日志）"
+    for key, label, patterns in _DIAG_RULES:
+        if any(p in combined for p in patterns):
+            diagnosis_key = key
+            diagnosis_label = label
+            break
+
+    sqm_excerpt = _tail_error_lines(sqm_text) or "（无 sqm.out 或文件为空）"
+    ante_excerpt = ante_text[-2500:].strip() if ante_text else "（无 antechamber 输出日志）"
+
+    return {
+        "diagnosis_key": diagnosis_key,
+        "diagnosis_label": diagnosis_label,
+        "sqm_excerpt": sqm_excerpt,
+        "antechamber_excerpt": ante_excerpt,
+    }
+
+
+def build_charge_confirm_message(
+    diagnosis_label: str,
+    working: list[int],
+    original_charge: int | None,
+) -> str:
+    """生成须先阅日志再确认电荷的提示文案。"""
+    charges = "、".join(str(q) for q in working) if working else "—"
+    base = (
+        f"配体 AM1-BCC 计算失败"
+        f"（{diagnosis_label or '原因待查'}）。"
+        f"请先查看 sqm.out 与 antechamber 日志末尾，确认失败原因后再选择净电荷。"
+    )
+    if original_charge is not None:
+        base += f" 原尝试净电荷：{original_charge}。"
+    if working:
+        base += f" 探测到可行净电荷：{charges}。"
+    return base
