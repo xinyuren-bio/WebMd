@@ -39,7 +39,8 @@ _STD_AA = frozenset({
     "TYR", "VAL", "HID", "HIE", "HIP",
 })
 
-# 环肽残基号起点：避免与蛋白残基号冲突，便于 make_ndx 按 ri 选组
+# 设计残基号起点（仅用于 tleap 成环引用）；体系建成后 gro 会重编号，
+# 分析/索引须用 peptide_resid_map 按序列映射到实际残基号
 _CYC_RESID_START = 9001
 
 # 元数据文件名（分析阶段读取）

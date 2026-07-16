@@ -273,17 +273,28 @@ def _从gro找配体残基(gro: Path) -> Optional[str]:
 
 
 def _读环肽残基范围(wd: Path) -> Optional[Tuple[int, int]]:
-    """读取环肽元数据中的残基号范围（9001 起），供 make_ndx 使用。"""
+    """读取肽在 gro 中的实际残基号范围（禁止直接用设计号 9001）。
+
+    tleap combine 后残基号会重排；优先按序列映射到 md.gro 中的真实编号。
+    """
+    try:
+        from peptide_resid_map import peptide_ri_range_for_ndx
+        mapped = peptide_ri_range_for_ndx(wd)
+        if mapped is not None:
+            return mapped
+    except Exception:
+        pass
+    # 回退：仅当已写入 resid_gmx_* 时使用；绝不使用裸 resid_start(9001)
     import json
     meta = wd / "webmd_cyclic_peptide.json"
     if not meta.is_file():
         return None
     try:
         d = json.loads(meta.read_text(encoding="utf-8"))
-        a, b = int(d["resid_start"]), int(d["resid_end"])
+        a, b = int(d.get("resid_gmx_start") or 0), int(d.get("resid_gmx_end") or 0)
         if a > 0 and b >= a:
             return a, b
-    except (OSError, KeyError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError):
         return None
     return None
 
@@ -338,11 +349,24 @@ def _扩展ndx配体复合物(wd: Path, gmx: str, gro: Path) -> None:
             rec_tmp = groups["Receptor"]
         if "Complex" not in groups:
             lines_c.append(f"{rec_tmp} | {lig_tmp}\nname {nxt} Complex\n")
+            nxt += 1
         if lines_c:
             _跑(
                 gmx, "make_ndx", "-f", gro.name, "-n", ndx.name, "-o", ndx.name,
                 inp="".join(lines_c) + "q\n", wd=wd,
             )
+            groups = _解析ndx组(ndx)
+        # 追加 Receptor_Backbone = Receptor & Backbone（叠合参考不含肽）
+        if "Receptor_Backbone" not in groups:
+            rec_id = groups.get("Receptor")
+            bb_id = groups.get("Backbone", groups.get("MainChain"))
+            if rec_id is not None and bb_id is not None:
+                nxt2 = max(groups.values()) + 1 if groups else nxt
+                _跑(
+                    gmx, "make_ndx", "-f", gro.name, "-n", ndx.name, "-o", ndx.name,
+                    inp=f"{rec_id} & {bb_id}\nname {nxt2} Receptor_Backbone\nq\n",
+                    wd=wd,
+                )
         return
 
     lig_res_list = _从gro找所有配体残基(gro)
@@ -400,9 +424,9 @@ def _resolve_groups(wd: Path, gmx: str) -> Dict[str, int]:
         _扩展ndx配体复合物(wd, gmx, gro)
     groups = _解析ndx组(ndx)
     out: Dict[str, int] = {}
-    bb = _找组号(groups, "Backbone", "MainChain")
-    # 环肽场景优先用 Receptor（蛋白不含环肽）
-    prot = _找组号(groups, "Receptor", "Protein", "Protein")
+    bb = _找组号(groups, "Receptor_Backbone", "Backbone", "MainChain")
+    # 环肽/线形肽场景优先用 Receptor（蛋白不含肽）
+    prot = _找组号(groups, "Receptor", "Protein")
     lig = _找组号(groups, "Ligand", "UNL", "LIG", "MOL", "UNK")
     cpx = _找组号(groups, "Complex", "Protein_Ligand", "Protein-MOL")
     if bb is None:

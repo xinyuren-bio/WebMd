@@ -58,7 +58,7 @@ if [ -n "$MISS" ]; then
 fi
 
 # ---------- 交付用：仅蛋白 + 配体（无水/离子）----------
-# 分析阶段仍使用全体系 fit.xtc；此处另导出 Complex 供用户下载
+# 分析用 fit_system.xtc；交付 fit.xtc/complex.pdb 仅含蛋白+配体（无水/离子）
 CPX_ID="$(_group_id Complex)"
 PROT_ID="$(_group_id Protein)"
 LIG_ID="$(_group_id Ligand)"
@@ -122,19 +122,33 @@ _extract_by_merge() {
 }
 
 SRC_XTC=""
-if [ -f fit.xtc ] && [ -s fit.xtc ]; then
+# 抽取溶质必须从全体系轨迹出发（与 md.tpr 一致）
+if [ -f fit_system.xtc ] && [ -s fit_system.xtc ]; then
+  SRC_XTC="fit_system.xtc"
+elif [ -f fit.xtc ] && [ -s fit.xtc ]; then
   SRC_XTC="fit.xtc"
 elif [ -f md.xtc ] && [ -s md.xtc ]; then
   SRC_XTC="md.xtc"
 fi
 
 EXTRACT_OK=0
-if [ -n "$SRC_XTC" ] && [ -n "${SOLUTE_ID:-}" ]; then
+# 若工作区 fit.xtc 已是溶质且存在 Complex，优先直接复制（避免对溶质轨迹再套 tpr 失败）
+if [ -f fit.xtc ] && [ -s fit.xtc ] && [ -f complex.pdb ] && [ -s complex.pdb ] && [ -n "${CPX_ID:-}" ] && [ -f fit_system.xtc ]; then
+  # 新流程：postprocess 已写出溶质 fit.xtc / complex.pdb
+  echo "交付轨迹/结构：使用后处理已生成的溶质 fit.xtc / complex.pdb"
+  cp -f fit.xtc "$DELIV_XTC"
+  cp -f complex.pdb "$DELIV_PDB"
+  EXTRACT_OK=1
+  HAVE_XTC=1
+  SOLUTE_NAME="${SOLUTE_NAME:-Complex}"
+fi
+
+if [ "$EXTRACT_OK" -eq 0 ] && [ -n "$SRC_XTC" ] && [ -n "${SOLUTE_ID:-}" ]; then
   if _extract_solute "$SRC_XTC" "$DELIV_XTC" "$DELIV_PDB" "$SOLUTE_ID"; then
     EXTRACT_OK=1
     HAVE_XTC=1
   fi
-elif [ -n "$SRC_XTC" ] && [ -n "${LIG_ID:-}" ]; then
+elif [ "$EXTRACT_OK" -eq 0 ] && [ -n "$SRC_XTC" ] && [ -n "${LIG_ID:-}" ]; then
   A="${REC_ID:-$PROT_ID}"
   if [ -n "${A:-}" ] && _extract_by_merge "$SRC_XTC" "$A" "$LIG_ID"; then
     EXTRACT_OK=1
@@ -143,6 +157,14 @@ elif [ -n "$SRC_XTC" ] && [ -n "${LIG_ID:-}" ]; then
   fi
 fi
 
+# 仅有溶质 fit.xtc、无 fit_system 的旧任务：直接打包现有文件
+if [ "$EXTRACT_OK" -eq 0 ] && [ -f fit.xtc ] && [ -s fit.xtc ] && [ -f complex.pdb ]; then
+  echo "交付：直接打包现有 fit.xtc / complex.pdb"
+  cp -f fit.xtc "$DELIV_XTC"
+  cp -f complex.pdb "$DELIV_PDB"
+  EXTRACT_OK=1
+  HAVE_XTC=1
+fi
 if [ "$EXTRACT_OK" -eq 0 ]; then
   echo "警告：无法抽取蛋白+配体轨迹，回退为现有 complex.pdb / 全体系轨迹（可能含水）"
   if [ -f complex.pdb ]; then

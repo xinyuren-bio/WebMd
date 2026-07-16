@@ -1,19 +1,17 @@
 #!/bin/bash
 # ==================================================
-# 功能说明：MD 轨迹后处理（PBC 整分子 → nojump → 按骨架叠合复合物）
+# 功能说明：MD 轨迹后处理（PBC 整分子 → nojump → 按骨架叠合；交付去溶剂）
 # 使用方法：在任务目录执行 bash postprocess_traj.sh
-# 依赖环境：GROMACS (gmx)
-# 生成时间：2026-07-14
+# 依赖环境：GROMACS (gmx)；肽映射可选 peptide_resid_map.py
+# 生成时间：2026-07-16
 # ==================================================
 #
 # 处理流程：
-#   1) make_ndx → System / Backbone / Ligand / Complex(蛋白+配体)
-#   2) trjconv -pbc mol      （输出 System）
-#   3) trjconv -pbc nojump   （输出 System）
-#   4) trjconv -fit rot+trans（先 Backbone 拟合，再输出 System；
-#      使蛋白+配体随骨架刚体变换，且与 md.tpr/to.ndx 原子数一致）
-#   5) dump 0 → complex.pdb （优先 Complex=蛋白+配体；无则 System）
-#   注：fit.xtc 仍为 System，供分析与 md.tpr 原子数一致；交付包再抽溶质
+#   1) make_ndx → System / Backbone / Ligand / Complex(蛋白+配体，无溶剂)
+#   2) trjconv -pbc mol / nojump（输出 System）
+#   3) trjconv -fit → fit_system.xtc（全体系，供分析与 md.tpr 原子数一致）
+#   4) 抽取 Complex → fit.xtc + complex.pdb（仅蛋白+肽/配体，便于邮件发送）
+#   注：分析脚本优先读 fit_system.xtc；交付包中的 fit.xtc 为溶质轨迹
 
 set -uo pipefail
 
@@ -85,6 +83,20 @@ _find_lig_res() {
   ' "$GRO"
 }
 
+# 肽实际残基号（按序列映射到 gro，禁止用设计号 9001）
+_peptide_ri_range() {
+  if [ -f peptide_resid_map.py ]; then
+    python3 peptide_resid_map.py "$WD" 2>/dev/null || true
+  elif [ -f webmd_cyclic_peptide.json ]; then
+    python3 -c "
+import json
+d=json.load(open('webmd_cyclic_peptide.json'))
+a=int(d.get('resid_gmx_start') or 0); b=int(d.get('resid_gmx_end') or 0)
+print(f'{a} {b}' if a>0 and b>=a else '')
+" 2>/dev/null || true
+  fi
+}
+
 echo "=== 生成索引 to.ndx ==="
 rm -f to.ndx
 echo q | $GMX make_ndx -f "$GRO" -o to.ndx || {
@@ -92,14 +104,17 @@ echo q | $GMX make_ndx -f "$GRO" -o to.ndx || {
   exit 1
 }
 
-# 环肽：按 webmd_cyclic_peptide.json 中残基号范围建 Ligand / Receptor / Complex
+# 环肽/线形肽：按 gro 实际残基号建 Ligand / Receptor / Complex
 if [ -f webmd_cyclic_peptide.json ]; then
-  CYC_A=$(python3 -c "import json;d=json.load(open('webmd_cyclic_peptide.json'));print(int(d['resid_start']))" 2>/dev/null || true)
-  CYC_B=$(python3 -c "import json;d=json.load(open('webmd_cyclic_peptide.json'));print(int(d['resid_end']))" 2>/dev/null || true)
-  if [ -n "${CYC_A:-}" ] && [ -n "${CYC_B:-}" ]; then
-    echo "检测到环肽残基号范围: ${CYC_A}-${CYC_B}"
+  PEPR="$(_peptide_ri_range)"
+  CYC_A=$(echo "$PEPR" | awk '{print $1}')
+  CYC_B=$(echo "$PEPR" | awk '{print $2}')
+  if [ -n "${CYC_A:-}" ] && [ -n "${CYC_B:-}" ] && [ "${CYC_A}" -gt 0 ] 2>/dev/null; then
+    echo "检测到肽实际残基号范围: ${CYC_A}-${CYC_B}（已映射，非设计号）"
     PROT_ID="$(_group_id Protein)"
+    BB0="$(_group_id Backbone)"
     PROT_ID="${PROT_ID:-1}"
+    BB0="${BB0:-4}"
     NXT=$(( $(_last_group_id) + 1 ))
     {
       echo "ri ${CYC_A}-${CYC_B}"
@@ -108,8 +123,12 @@ if [ -f webmd_cyclic_peptide.json ]; then
       echo "name $((NXT+1)) Receptor"
       echo "$((NXT+1)) | ${NXT}"
       echo "name $((NXT+2)) Complex"
+      echo "$((NXT+1)) & ${BB0}"
+      echo "name $((NXT+3)) Receptor_Backbone"
       echo q
     } | $GMX make_ndx -f "$GRO" -n to.ndx -o to.ndx || true
+  else
+    echo "警告：无法将肽序列映射到 gro 残基号，跳过肽 Ligand 建组"
   fi
 fi
 
@@ -119,9 +138,8 @@ while IFS= read -r _lig; do
 done < <(_find_lig_res)
 echo "检测到配体残基: ${LIG_ARR[*]:-（无）}"
 
-# 已有环肽 Ligand 时跳过小分子残基名建组
+# 已有肽 Ligand 时跳过小分子残基名建组
 if [ -z "$(_group_id Ligand)" ] && [ "${#LIG_ARR[@]}" -gt 0 ]; then
-  # 为每个配体残基建组
   {
     for res in "${LIG_ARR[@]}"; do
       echo "r ${res}"
@@ -129,7 +147,6 @@ if [ -z "$(_group_id Ligand)" ] && [ "${#LIG_ARR[@]}" -gt 0 ]; then
     echo "q"
   } | $GMX make_ndx -f "$GRO" -n to.ndx -o to.ndx || true
 
-  # 按残基名重命名为 Ligand / Ligand_RES
   RENAME=""
   for res in "${LIG_ARR[@]}"; do
     rid="$(_group_id "$res")"
@@ -148,7 +165,6 @@ if [ -z "$(_group_id Ligand)" ] && [ "${#LIG_ARR[@]}" -gt 0 ]; then
     printf "%b" "${RENAME}q\n" | $GMX make_ndx -f "$GRO" -n to.ndx -o to.ndx || true
   fi
 
-  # 多配体合并为 Ligand
   if [ "${#LIG_ARR[@]}" -gt 1 ] && [ -z "$(_group_id Ligand)" ]; then
     MERGE=""
     for res in "${LIG_ARR[@]}"; do
@@ -163,7 +179,6 @@ if [ -z "$(_group_id Ligand)" ] && [ "${#LIG_ARR[@]}" -gt 0 ]; then
     fi
   fi
 
-  # Protein | Ligand → Complex（供后续分析选组；fit 输出仍用 System 以兼容 md.tpr）
   if [ -z "$(_group_id Complex)" ]; then
     PROT_ID="$(_group_id Protein)"
     LIG_ID="$(_group_id Ligand)"
@@ -177,19 +192,24 @@ if [ -z "$(_group_id Ligand)" ] && [ "${#LIG_ARR[@]}" -gt 0 ]; then
 fi
 
 SYS_ID="$(_group_id System)"
-BB_ID="$(_group_id Backbone)"
+BB_ID="$(_group_id Receptor_Backbone)"
+[ -z "$BB_ID" ] && BB_ID="$(_group_id Backbone)"
 CPX_ID="$(_group_id Complex)"
 LIG_ID="$(_group_id Ligand)"
 SYS_ID="${SYS_ID:-0}"
 BB_ID="${BB_ID:-4}"
 
-echo "组号: System=${SYS_ID}  Backbone=${BB_ID}  Ligand=${LIG_ID:-—}  Complex=${CPX_ID:-—}"
+echo "组号: System=${SYS_ID}  FitRef=${BB_ID}  Ligand=${LIG_ID:-—}  Complex=${CPX_ID:-—}"
 echo "----- to.ndx 组列表 -----"
 awk '/^\[/{print}' to.ndx
 
-# 无轨迹：只保留 ndx / pdb
+# 无轨迹：只保留 ndx / pdb（溶质优先）
 if [ ! -f md.xtc ] || [ ! -s md.xtc ]; then
-  if [ ! -f complex.pdb ]; then
+  rm -f complex.pdb
+  if [ -n "${CPX_ID:-}" ]; then
+    echo "$CPX_ID" | $GMX trjconv -f "$GRO" -s md.tpr -o complex.pdb -n to.ndx 2>/dev/null || \
+      $GMX editconf -f "$GRO" -o complex.pdb 2>/dev/null || true
+  else
     $GMX editconf -f "$GRO" -o complex.pdb 2>/dev/null || cp -f "$GRO" complex.pdb 2>/dev/null || true
   fi
   echo "提示：未找到有效 md.xtc，已跳过 PBC/叠合"
@@ -198,7 +218,7 @@ if [ ! -f md.xtc ] || [ ! -s md.xtc ]; then
 fi
 
 echo "=== md.xtc → mol.xtc (-pbc mol, System) ==="
-rm -f mol.xtc nojump.xtc fit.xtc
+rm -f mol.xtc nojump.xtc fit_system.xtc fit.xtc
 echo "$SYS_ID" | $GMX trjconv -f md.xtc -s md.tpr -pbc mol -o mol.xtc -n to.ndx || {
   echo "错误：-pbc mol 失败"
   exit 1
@@ -210,37 +230,49 @@ echo "$SYS_ID" | $GMX trjconv -f mol.xtc -s md.tpr -pbc nojump -n to.ndx -o noju
   exit 1
 }
 
-echo "=== nojump.xtc → fit.xtc (-fit rot+trans, Backbone → System) ==="
-# 第一选择：拟合参考 = Backbone
-# 第二选择：输出 = System（全原子与 md.tpr/to.ndx 一致；蛋白+配体随骨架刚体变换，
-#   避免「仅输出 Complex」导致原子数不匹配而使后续 RMSD 失败）
+echo "=== nojump.xtc → fit_system.xtc (-fit rot+trans, 参考骨架 → System) ==="
 printf "%s\n%s\n" "$BB_ID" "$SYS_ID" | $GMX trjconv \
-  -f nojump.xtc -s md.tpr -fit rot+trans -o fit.xtc -n to.ndx || {
+  -f nojump.xtc -s md.tpr -fit rot+trans -o fit_system.xtc -n to.ndx || {
   echo "错误：-fit rot+trans 失败"
   exit 1
 }
 
-if [ ! -f fit.xtc ] || [ ! -s fit.xtc ]; then
-  echo "错误：未生成有效 fit.xtc"
+if [ ! -f fit_system.xtc ] || [ ! -s fit_system.xtc ]; then
+  echo "错误：未生成有效 fit_system.xtc"
   exit 1
 fi
 
-echo "=== 导出 complex.pdb (dump 0, 优先蛋白+配体) ==="
-rm -f complex.pdb
-PDB_GID="${CPX_ID:-}"
-if [ -z "$PDB_GID" ] && [ -n "${LIG_ID:-}" ]; then
-  # 无 Complex 时回退 System（打包阶段会再尝试合并抽取）
-  PDB_GID="$SYS_ID"
-elif [ -z "$PDB_GID" ]; then
-  PDB_GID="$SYS_ID"
+echo "=== 抽取蛋白+配体 → fit.xtc / complex.pdb（去溶剂与离子）==="
+rm -f complex.pdb fit.xtc
+EXTRACT_GID="${CPX_ID:-}"
+if [ -z "$EXTRACT_GID" ] && [ -n "${LIG_ID:-}" ]; then
+  PROT_ID="$(_group_id Receptor)"
+  [ -z "$PROT_ID" ] && PROT_ID="$(_group_id Protein)"
+  if [ -n "${PROT_ID:-}" ]; then
+    printf "%s | %s\nq\n" "$PROT_ID" "$LIG_ID" | $GMX make_ndx -f "$GRO" -n to.ndx -o to.ndx || true
+    EXTRACT_GID="$(_last_group_id)"
+    printf "name %s Complex\nq\n" "$EXTRACT_GID" | $GMX make_ndx -f "$GRO" -n to.ndx -o to.ndx || true
+    CPX_ID="$(_group_id Complex)"
+    EXTRACT_GID="${CPX_ID:-$EXTRACT_GID}"
+  fi
 fi
-echo "$PDB_GID" | $GMX trjconv -f fit.xtc -s md.tpr -dump 0 -o complex.pdb -n to.ndx || {
-  echo "$SYS_ID" | $GMX trjconv -f md.xtc -s md.tpr -dump 0 -o complex.pdb -n to.ndx 2>/dev/null || \
-    echo 0 | $GMX trjconv -f md.xtc -s md.tpr -dump 0 -o complex.pdb 2>/dev/null || \
-    $GMX editconf -f "$GRO" -o complex.pdb 2>/dev/null || true
-}
 
-# 清理中间轨迹，节省磁盘；保留原始 md.xtc 与分析用 fit.xtc
+if [ -n "${EXTRACT_GID:-}" ]; then
+  echo "$EXTRACT_GID" | $GMX trjconv -f fit_system.xtc -s md.tpr -n to.ndx -o fit.xtc || {
+    echo "警告：抽取溶质轨迹失败"
+  }
+  echo "$EXTRACT_GID" | $GMX trjconv -f fit_system.xtc -s md.tpr -n to.ndx -dump 0 -o complex.pdb || true
+fi
+
+if [ ! -f fit.xtc ] || [ ! -s fit.xtc ]; then
+  echo "警告：未能生成仅溶质 fit.xtc，回退复制 fit_system.xtc（含水）"
+  cp -f fit_system.xtc fit.xtc
+fi
+if [ ! -f complex.pdb ] || [ ! -s complex.pdb ]; then
+  echo "$SYS_ID" | $GMX trjconv -f fit_system.xtc -s md.tpr -dump 0 -o complex.pdb -n to.ndx 2>/dev/null || \
+    $GMX editconf -f "$GRO" -o complex.pdb 2>/dev/null || true
+fi
+
 rm -f mol.xtc nojump.xtc
 
-echo "=== 轨迹后处理完成：fit.xtc / to.ndx / complex.pdb ==="
+echo "=== 轨迹后处理完成：fit_system.xtc(分析) / fit.xtc(溶质) / complex.pdb(溶质) / to.ndx ==="

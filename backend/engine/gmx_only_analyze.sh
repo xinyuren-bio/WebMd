@@ -15,7 +15,8 @@ cd "$WD"
 
 mkdir -p analysis_csv analysis_plots
 
-XTCP="fit.xtc"
+XTCP="fit_system.xtc"
+if [ ! -s "$XTCP" ]; then XTCP="fit.xtc"; fi
 if [ ! -s "$XTCP" ]; then XTCP="md.xtc"; fi
 if [ ! -f md.tpr ] || [ ! -s "$XTCP" ]; then
   echo "无有效轨迹，跳过 GMX 分析"

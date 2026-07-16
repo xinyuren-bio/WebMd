@@ -22,6 +22,7 @@ SCRIPTS = [
     "run_traj_analysis.sh",
     "traj_analyze.py",
     "advanced_analyze.py",
+    "peptide_resid_map.py",
     "pack_deliverables.sh",
     "plot_style.py",
     "fel_plot.py",

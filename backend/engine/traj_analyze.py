@@ -138,7 +138,8 @@ def main() -> int:
 
     tpr = wd / "md.tpr"
     xtc = None
-    for cand in ("fit.xtc", "md.xtc"):
+    # 分析必须用与 md.tpr 原子数一致的全体系轨迹（优先 fit_system）
+    for cand in ("fit_system.xtc", "fit.xtc", "md.xtc"):
         p = wd / cand
         if p.is_file() and p.stat().st_size > 0:
             xtc = p
