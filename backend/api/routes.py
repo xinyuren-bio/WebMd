@@ -178,6 +178,7 @@ async def create_task(
     peptide_upload_mode: str = Form(default="separate"),
     protein_chains: str = Form(default=""),
     peptide_chain: str = Form(default=""),
+    ligand_residues: str = Form(default=""),
     temperature: float = Form(default=DEFAULT_PARAMS["temperature"]),
     pressure: float = Form(default=DEFAULT_PARAMS["pressure"]),
     timestep: float = Form(default=DEFAULT_PARAMS["timestep"]),
@@ -232,6 +233,11 @@ async def create_task(
     mol2_paths: list[str] = []
     cyclic_pdb_path: Optional[str] = None
     pdb_path = work_dir / "protein.pdb"
+    lig_res_keys: list[str] = []
+
+    def _norm_ch(s: str) -> str:
+        from engine.pdb_chains import norm_chain
+        return norm_chain(s)
 
     if is_pep and pep_mode == "complex":
         # 复合物 PDB：用户选择蛋白链与肽链后由服务端拆分
@@ -244,13 +250,6 @@ async def create_task(
         with open(complex_path, "wb") as f:
             f.write(await pdb_file.read())
 
-        def _norm_ch(s: str) -> str:
-            t = (s or "").strip()
-            if t in ("", "_", "(空白链号)"):
-                return " "
-            return t[:1]
-
-        # 前端空白链用 "_"；多链用逗号分隔
         raw_prot = [x for x in (protein_chains or "").split(",") if x != ""]
         prot_list = [_norm_ch(x) for x in raw_prot]
         if not (peptide_chain or "").strip() and peptide_chain != "_":
@@ -264,7 +263,6 @@ async def create_task(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        # split_complex 已写入 protein.pdb；肽文件再拷贝为标准上传名
         pdb_path = Path(prot_out)
         cyc_dest = work_dir / (
             "cyclic_peptide_upload.pdb" if is_cyc else "linear_peptide_upload.pdb"
@@ -272,6 +270,35 @@ async def create_task(
         if Path(pep_out).resolve() != cyc_dest.resolve():
             cyc_dest.write_bytes(Path(pep_out).read_bytes())
         cyclic_pdb_path = str(cyc_dest)
+    elif not is_pep and pep_mode == "complex":
+        # 小分子复合物：蛋白链 + HETATM 配体残基 → 自动转 MOL2
+        from engine.pdb_chains import split_complex_mol2
+
+        raw = Path(pdb_file.filename or "complex.pdb").name
+        if not raw.lower().endswith(".pdb"):
+            raise HTTPException(status_code=400, detail="复合物须为 PDB 格式")
+        complex_path = work_dir / "complex_upload.pdb"
+        with open(complex_path, "wb") as f:
+            f.write(await pdb_file.read())
+
+        raw_prot = [x for x in (protein_chains or "").split(",") if x != ""]
+        prot_list = [_norm_ch(x) for x in raw_prot]
+        lig_res_keys = [x.strip() for x in (ligand_residues or "").split(",") if x.strip()]
+        if not prot_list:
+            raise HTTPException(status_code=400, detail="复合物模式请至少选择一条蛋白链")
+        if not lig_res_keys:
+            raise HTTPException(status_code=400, detail="复合物模式请至少选择一个配体残基")
+        if len(lig_res_keys) > 3:
+            raise HTTPException(status_code=400, detail="最多选择 3 个配体残基")
+        try:
+            prot_out, mol2_paths = split_complex_mol2(
+                complex_path, prot_list, lig_res_keys, work_dir,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        pdb_path = Path(prot_out)
     else:
         # 蛋白文件名消毒，避免空格
         pdb_raw = Path(pdb_file.filename or "protein.pdb").name
@@ -293,7 +320,7 @@ async def create_task(
         with open(cyc_dest, "wb") as f:
             f.write(await cyclic_peptide_file.read())
         cyclic_pdb_path = str(cyc_dest)
-    elif not is_pep:
+    elif not is_pep and pep_mode != "complex":
         for idx, up in enumerate([mol2_file, mol2_file_2, mol2_file_3], 1):
             if up is None or not up.filename:
                 continue
@@ -327,9 +354,10 @@ async def create_task(
         "ligand_type": lt,
         "is_cyclic_peptide": is_cyc,
         "is_linear_peptide": is_lin,
-        "peptide_upload_mode": pep_mode if is_pep else "separate",
-        "protein_chains": protein_chains if is_pep and pep_mode == "complex" else "",
+        "peptide_upload_mode": pep_mode if (is_pep or lt == "mol2") else "separate",
+        "protein_chains": protein_chains if pep_mode == "complex" else "",
         "peptide_chain": peptide_chain if is_pep and pep_mode == "complex" else "",
+        "ligand_residues": ",".join(lig_res_keys) if not is_pep and pep_mode == "complex" else "",
     }
 
     task.work_dir = str(work_dir)

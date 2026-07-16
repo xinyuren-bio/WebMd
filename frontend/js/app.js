@@ -17,9 +17,14 @@
   const uploadSubtitle = document.getElementById("upload-subtitle");
   const peptideModeGroup = document.getElementById("peptide-upload-mode-group");
   const complexChainGroup = document.getElementById("complex-chain-group");
+  const complexChainHint = document.getElementById("complex-chain-hint");
   const proteinChainChecks = document.getElementById("protein-chain-checks");
   const peptideChainRadios = document.getElementById("peptide-chain-radios");
+  const peptideChainCol = document.getElementById("peptide-chain-col");
+  const ligandResidueCol = document.getElementById("ligand-residue-col");
+  const ligandResidueChecks = document.getElementById("ligand-residue-checks");
   var cachedChains = [];
+  var cachedLigandResidues = [];
   var splitPreviewToken = 0;
 
   const btnSubmit = document.getElementById("btn-submit");
@@ -72,7 +77,7 @@
   pdbInput.addEventListener("change", function () {
     pdbName.textContent = this.files[0] ? this.files[0].name : "未选择文件";
     pdbName.classList.toggle("has-file", !!this.files[0]);
-    if (isPeptideMode() && getPeptideUploadMode() === "complex") {
+    if (isComplexMode()) {
       refreshComplexChains();
     } else {
       updateSubmitButton();
@@ -111,9 +116,21 @@
     return getLigandType() === "cyclic";
   }
 
-  function getPeptideUploadMode() {
+  function isMol2Mode() {
+    return getLigandType() === "mol2";
+  }
+
+  function getUploadMode() {
     var el = document.querySelector('input[name="peptide-upload-mode"]:checked');
     return el ? el.value : "separate";
+  }
+
+  function isComplexMode() {
+    return getUploadMode() === "complex" && (isPeptideMode() || isMol2Mode());
+  }
+
+  function getPeptideUploadMode() {
+    return getUploadMode();
   }
 
   function chainKey(ch) {
@@ -152,6 +169,96 @@
       return String(a.label).localeCompare(String(b.label));
     });
     return out;
+  }
+
+  var skipLigandRes = {
+    HOH: 1, WAT: 1, TIP: 1, TIP3: 1, SOL: 1, DOD: 1, OH2: 1, H2O: 1,
+    NA: 1, CL: 1, K: 1, MG: 1, CA: 1, ZN: 1, FE: 1, MN: 1, CO: 1, NI: 1, CU: 1,
+    CD: 1, HG: 1, IOD: 1, BR: 1, CS: 1, RB: 1, SR: 1, BA: 1, LI: 1, F: 1,
+    "NA+": 1, "CL-": 1, "K+": 1, MG2: 1,
+  };
+
+  function ligandResidueKey(ch, rn, ri) {
+    var ck = ch === " " || ch === "" ? "_" : ch;
+    return ck + "|" + rn + "|" + ri;
+  }
+
+  function parsePdbLigandResidues(text) {
+    var groups = {};
+    var order = [];
+    text.split(/\r?\n/).forEach(function (ln) {
+      if (ln.indexOf("HETATM") !== 0 || ln.length < 26) return;
+      var ch = ln.length > 21 ? ln.charAt(21) : " ";
+      var rn = ln.substring(17, 20).trim().toUpperCase();
+      var ri = ln.substring(22, 26).trim();
+      if (skipLigandRes[rn]) return;
+      var gk = ch + "|" + rn + "|" + ri;
+      if (!groups[gk]) {
+        groups[gk] = {
+          chain: ch,
+          label: ch.trim() ? ch : "(空白链号)",
+          resname: rn,
+          resid: ri,
+          key: ligandResidueKey(ch, rn, ri),
+          n_atoms: 0,
+        };
+        order.push(gk);
+      }
+      groups[gk].n_atoms += 1;
+    });
+    return order.map(function (k) {
+      return groups[k];
+    });
+  }
+
+  function splitComplexMol2ByResidue(text, protKeys, ligKeys) {
+    var protSet = {};
+    protKeys.forEach(function (k) {
+      protSet[k === "_" ? " " : k] = true;
+    });
+    var ligSet = {};
+    ligKeys.forEach(function (k) {
+      ligSet[k] = true;
+    });
+    var protLines = [];
+    var ligMap = {};
+    ligKeys.forEach(function (k) {
+      ligMap[k] = [];
+    });
+    text.split(/\r?\n/).forEach(function (ln) {
+      if (ln.indexOf("ATOM") !== 0 && ln.indexOf("HETATM") !== 0) return;
+      if (ln.length < 26) return;
+      var ch = ln.charAt(21);
+      var rn = ln.substring(17, 20).trim().toUpperCase();
+      var ri = ln.substring(22, 26).trim();
+      var row = ln;
+      if (!/\n$/.test(row)) row += "\n";
+      if (ln.indexOf("ATOM") === 0 && protSet[ch]) {
+        protLines.push(row);
+        return;
+      }
+      if (ln.indexOf("HETATM") === 0) {
+        var lk = ligandResidueKey(ch, rn, ri);
+        if (ligSet[lk]) ligMap[lk].push(row);
+      }
+    });
+    var ligParts = [];
+    ligKeys.forEach(function (k) {
+      if (!ligMap[k] || !ligMap[k].length) {
+        throw new Error("按残基拆分配体失败，请检查配体选择");
+      }
+      var lines = ligMap[k].slice();
+      lines.push("END\n");
+      ligParts.push(new Blob([lines.join("")], { type: "chemical/x-pdb" }));
+    });
+    if (!protLines.length) {
+      throw new Error("按链拆分蛋白失败，请确认蛋白链选择正确");
+    }
+    protLines.push("END\n");
+    return {
+      protein: new Blob([protLines.join("")], { type: "chemical/x-pdb" }),
+      ligands: ligParts,
+    };
   }
 
   function splitPdbByChains(text, protKeys, pepKey) {
@@ -195,6 +302,57 @@
     if (!peptideChainRadios) return "";
     var el = peptideChainRadios.querySelector('input[type="radio"]:checked');
     return el ? el.value : "";
+  }
+
+  function getSelectedLigandResidues() {
+    if (!ligandResidueChecks) return [];
+    return Array.prototype.map
+      .call(ligandResidueChecks.querySelectorAll('input[type="checkbox"]:checked'), function (el) {
+        return el.value;
+      });
+  }
+
+  function renderLigandResiduePickers(residues) {
+    cachedLigandResidues = residues || [];
+    if (!ligandResidueChecks) return;
+    if (!cachedLigandResidues.length) {
+      ligandResidueChecks.innerHTML = "<p class=\"hint\">未识别到 HETATM 配体残基（已排除水/离子）</p>";
+      return;
+    }
+    var sorted = cachedLigandResidues.slice().sort(function (a, b) {
+      return a.n_atoms - b.n_atoms;
+    });
+    var defaultPick = sorted[0];
+    ligandResidueChecks.innerHTML = cachedLigandResidues
+      .map(function (r) {
+        var checked = r.key === defaultPick.key;
+        return (
+          '<label class="chain-option"><input type="checkbox" name="ligand-residue" value="' +
+          r.key +
+          '"' +
+          (checked ? " checked" : "") +
+          '><span class="chain-option-text">链 <code>' +
+          r.label +
+          "</code> · <code>" +
+          r.resname +
+          r.resid +
+          "</code> · " +
+          r.n_atoms +
+          " 原子</span></label>"
+        );
+      })
+      .join("");
+    ligandResidueChecks.querySelectorAll("input").forEach(function (el) {
+      el.addEventListener("change", function () {
+        var picked = getSelectedLigandResidues();
+        if (picked.length > 3) {
+          el.checked = false;
+          showError("最多选择 3 个配体残基");
+        }
+        updateSubmitButton();
+        updatePreview();
+      });
+    });
   }
 
   function renderChainPickers(chains) {
@@ -281,6 +439,7 @@
     var f = pdbInput && pdbInput.files[0];
     if (!f) {
       renderChainPickers([]);
+      renderLigandResiduePickers([]);
       updateSubmitButton();
       updatePreview();
       return;
@@ -288,10 +447,17 @@
     var reader = new FileReader();
     reader.onload = function () {
       try {
-        renderChainPickers(parsePdbChains(String(reader.result || "")));
+        var text = String(reader.result || "");
+        renderChainPickers(parsePdbChains(text));
+        if (isMol2Mode()) {
+          renderLigandResiduePickers(parsePdbLigandResidues(text));
+        } else {
+          renderLigandResiduePickers([]);
+        }
       } catch (e) {
         renderChainPickers([]);
-        showError(e.message || "解析复合物链失败");
+        renderLigandResiduePickers([]);
+        showError(e.message || "解析复合物失败");
       }
       updateSubmitButton();
       updatePreview();
@@ -305,21 +471,36 @@
 
   function syncLigandTypeUi() {
     var t = getLigandType();
-    var pep = t === "cyclic" || t === "linear";
-    var complexMode = pep && getPeptideUploadMode() === "complex";
-    if (mol2Group) mol2Group.classList.toggle("hidden", pep);
-    if (peptideModeGroup) peptideModeGroup.classList.toggle("hidden", !pep);
+    var pep = isPeptideMode();
+    var mol2 = isMol2Mode();
+    var complexMode = isComplexMode();
+    if (mol2Group) mol2Group.classList.toggle("hidden", pep || complexMode);
+    if (peptideModeGroup) peptideModeGroup.classList.toggle("hidden", !(pep || mol2));
     if (peptideGroup) peptideGroup.classList.toggle("hidden", !pep || complexMode);
     if (complexChainGroup) complexChainGroup.classList.toggle("hidden", !complexMode);
-    if (mol2Actions) mol2Actions.classList.toggle("hidden", pep);
+    if (mol2Actions) mol2Actions.classList.toggle("hidden", pep || complexMode);
+    if (peptideChainCol) peptideChainCol.classList.toggle("hidden", !pep || !complexMode);
+    if (ligandResidueCol) ligandResidueCol.classList.toggle("hidden", !mol2 || !complexMode);
     if (peptideLabel) {
       peptideLabel.textContent = t === "linear" ? "线形肽 · PDB" : "环肽 · PDB";
     }
     if (pdbFileLabel) {
       pdbFileLabel.textContent = complexMode ? "复合物 PDB 文件" : "蛋白 PDB 文件";
     }
+    if (complexChainHint) {
+      if (mol2 && complexMode) {
+        complexChainHint.textContent =
+          "上传对接/复合物 PDB 后：勾选蛋白链（ATOM），并选择 HETATM 配体残基（最多 3 个；已排除水/离子）。";
+      } else if (pep && complexMode) {
+        complexChainHint.textContent =
+          "上传复合物后将列出链；请勾选蛋白链，并选择一条肽链。";
+      }
+    }
     if (uploadSubtitle) {
-      if (complexMode) {
+      if (mol2 && complexMode) {
+        uploadSubtitle.textContent =
+          "上传蛋白-配体复合物 PDB，选择蛋白链与配体残基（坐标已固定，服务端自动转 MOL2）";
+      } else if (pep && complexMode) {
         uploadSubtitle.textContent =
           "上传蛋白+肽复合物 PDB，选择蛋白链与肽链（标准氨基酸；相对位置已固定在同一文件中）";
       } else if (t === "cyclic") {
@@ -342,7 +523,7 @@
           "线形肽可用分开上传或复合物按链拆分。ff14SB，保留 N/C 末端；蛋白将自动补全链内部缺失残基。";
       } else {
         ligandTypeHint.textContent =
-          "小分子请上传 MOL2；肽类可分开上传，或上传复合物 PDB 后选择蛋白链与肽链。";
+          "小分子可分开上传 MOL2，或上传复合物 PDB 后选择蛋白链与 HETATM 配体残基（自动转 MOL2）。";
       }
     }
     var addH = document.getElementById("ligand-add-h");
@@ -381,7 +562,7 @@
   function updatePreview() {
     if (!window.MdViewer) return;
     if (isPeptideMode()) {
-      if (getPeptideUploadMode() === "complex") {
+      if (isComplexMode()) {
         var f = pdbInput.files[0];
         var pChains = getSelectedProteinChains();
         var pepCh = getSelectedPeptideChain();
@@ -421,6 +602,34 @@
       }
       return;
     }
+    if (isMol2Mode() && isComplexMode()) {
+      var f2 = pdbInput.files[0];
+      var pChains2 = getSelectedProteinChains();
+      var ligKeys = getSelectedLigandResidues();
+      if (!f2 || !pChains2.length || !ligKeys.length || !window.MdViewer.loadFromPdbs) {
+        window.MdViewer.hide();
+        return;
+      }
+      var token2 = ++splitPreviewToken;
+      var reader2 = new FileReader();
+      reader2.onload = function () {
+        if (token2 !== splitPreviewToken) return;
+        try {
+          var parts2 = splitComplexMol2ByResidue(String(reader2.result || ""), pChains2, ligKeys);
+          var protFile2 = new File([parts2.protein], "protein_split.pdb", {
+            type: "chemical/x-pdb",
+          });
+          var ligFile2 = new File([parts2.ligands[0]], "ligand_split.pdb", {
+            type: "chemical/x-pdb",
+          });
+          window.MdViewer.loadFromPdbs(protFile2, ligFile2);
+        } catch (e) {
+          window.MdViewer.hide();
+        }
+      };
+      reader2.readAsText(f2);
+      return;
+    }
     var mol2s = getMol2Files();
     if (pdbInput.files[0] && mol2s.length && window.MdViewer.loadFromFiles) {
       window.MdViewer.loadFromFiles(pdbInput.files[0], mol2s);
@@ -432,7 +641,7 @@
   function updateSubmitButton() {
     var ready;
     if (isPeptideMode()) {
-      if (getPeptideUploadMode() === "complex") {
+      if (isComplexMode()) {
         var pcs = getSelectedProteinChains();
         var pep = getSelectedPeptideChain();
         ready = !!(
@@ -444,6 +653,10 @@
       } else {
         ready = !!(pdbInput.files[0] && peptideInput && peptideInput.files[0]);
       }
+    } else if (isMol2Mode() && isComplexMode()) {
+      var pcs2 = getSelectedProteinChains();
+      var ligs = getSelectedLigandResidues();
+      ready = !!(pdbInput.files[0] && pcs2.length && ligs.length && ligs.length <= 3);
     } else {
       ready = !!(pdbInput.files[0] && getMol2Files().length > 0);
     }
@@ -453,8 +666,10 @@
       submitHint.textContent = "请先登录后再提交";
     } else if (ready) {
       submitHint.textContent = "文件已就绪，点击提交";
-    } else if (isPeptideMode() && getPeptideUploadMode() === "complex") {
+    } else if (isPeptideMode() && isComplexMode()) {
       submitHint.textContent = "请上传复合物 PDB，并选择蛋白链与肽链（不可重复）";
+    } else if (isMol2Mode() && isComplexMode()) {
+      submitHint.textContent = "请上传复合物 PDB，并选择蛋白链与配体残基（1–3 个）";
     } else if (getLigandType() === "cyclic") {
       submitHint.textContent = "请先上传蛋白 PDB 与环肽 PDB";
     } else if (getLigandType() === "linear") {
@@ -487,15 +702,16 @@
       ligand_type: getLigandType(),
       is_cyclic_peptide: getLigandType() === "cyclic" ? "1" : "0",
       is_linear_peptide: getLigandType() === "linear" ? "1" : "0",
-      peptide_upload_mode: isPeptideMode() ? getPeptideUploadMode() : "separate",
+      peptide_upload_mode: (isPeptideMode() || isMol2Mode()) ? getUploadMode() : "separate",
       protein_chains: "",
       peptide_chain: "",
+      ligand_residues: "",
     };
   }
 
   btnSubmit.addEventListener("click", async function () {
     if (isPeptideMode()) {
-      if (getPeptideUploadMode() === "complex") {
+      if (isComplexMode()) {
         if (!pdbInput.files[0] || !getSelectedProteinChains().length || !getSelectedPeptideChain()) {
           return;
         }
@@ -504,6 +720,14 @@
           return;
         }
       } else if (!pdbInput.files[0] || !peptideInput || !peptideInput.files[0]) {
+        return;
+      }
+    } else if (isMol2Mode() && isComplexMode()) {
+      if (
+        !pdbInput.files[0] ||
+        !getSelectedProteinChains().length ||
+        !getSelectedLigandResidues().length
+      ) {
         return;
       }
     } else if (!pdbInput.files[0] || !getMol2Files().length) {
@@ -516,9 +740,13 @@
       showError("模拟时长仅支持 10 ns、100 ns 或 200 ns");
       return;
     }
-    if (isPeptideMode() && getPeptideUploadMode() === "complex") {
+    if (isPeptideMode() && isComplexMode()) {
       params.protein_chains = getSelectedProteinChains().join(",");
       params.peptide_chain = getSelectedPeptideChain();
+    }
+    if (isMol2Mode() && isComplexMode()) {
+      params.protein_chains = getSelectedProteinChains().join(",");
+      params.ligand_residues = getSelectedLigandResidues().join(",");
     }
 
     errorArea.classList.add("hidden");
@@ -531,14 +759,16 @@
     var formData = new FormData();
     formData.append("pdb_file", pdbInput.files[0]);
     if (isPeptideMode()) {
-      if (getPeptideUploadMode() === "separate") {
+      if (getUploadMode() === "separate") {
         // 后端字段名沿用 cyclic_peptide_file，线形/环肽共用上传槽
         formData.append("cyclic_peptide_file", peptideInput.files[0]);
       }
-    } else if (window.WebMD && window.WebMD.appendMol2ToFormData) {
-      window.WebMD.appendMol2ToFormData(formData);
-    } else {
-      formData.append("mol2_file", mol2Input.files[0]);
+    } else if (!isComplexMode()) {
+      if (window.WebMD && window.WebMD.appendMol2ToFormData) {
+        window.WebMD.appendMol2ToFormData(formData);
+      } else {
+        formData.append("mol2_file", mol2Input.files[0]);
+      }
     }
     Object.keys(params).forEach(function (key) {
       formData.append(key, params[key]);

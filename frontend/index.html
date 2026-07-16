@@ -244,12 +244,12 @@
         <option value="linear">线形肽（PDB，ff14SB，保留末端）</option>
       </select>
     </div>
-    <p class="hint" id="ligand-type-hint">小分子请上传 MOL2；肽类可分开上传，或上传复合物 PDB 后选择蛋白链与肽链。</p>
+    <p class="hint" id="ligand-type-hint">小分子可分开上传 MOL2，或上传复合物 PDB 后选择蛋白链与配体残基；肽类可分开上传或按链拆分。</p>
     <div class="form-group hidden" id="peptide-upload-mode-group">
-      <label>肽类上传方式</label>
+      <label>上传方式</label>
       <div class="peptide-mode-row">
-        <label class="radio-inline"><input type="radio" name="peptide-upload-mode" value="separate" checked> 分开上传（蛋白 PDB + 肽 PDB）</label>
-        <label class="radio-inline"><input type="radio" name="peptide-upload-mode" value="complex"> 复合物 PDB（按链拆分）</label>
+        <label class="radio-inline"><input type="radio" name="peptide-upload-mode" value="separate" checked> 分开上传</label>
+        <label class="radio-inline"><input type="radio" name="peptide-upload-mode" value="complex"> 复合物 PDB（按链/残基拆分）</label>
       </div>
     </div>
     <div class="form-row">
@@ -285,23 +285,27 @@
       </div>
     </div>
     <div class="complex-chain-panel hidden" id="complex-chain-group">
-      <p class="hint" id="complex-chain-hint">上传复合物后将列出链；请勾选蛋白链，并选择一条肽链。</p>
+      <p class="hint" id="complex-chain-hint">上传复合物后将列出链；请勾选蛋白链，并选择肽链或配体残基。</p>
       <div class="chain-pick-block">
         <div class="chain-pick-col">
           <strong>蛋白链（可多选）</strong>
           <div id="protein-chain-checks" class="chain-check-list"></div>
         </div>
-        <div class="chain-pick-col">
+        <div class="chain-pick-col" id="peptide-chain-col">
           <strong>肽链（单选）</strong>
           <div id="peptide-chain-radios" class="chain-check-list"></div>
+        </div>
+        <div class="chain-pick-col hidden" id="ligand-residue-col">
+          <strong>配体残基（可多选，最多 3 个）</strong>
+          <div id="ligand-residue-checks" class="chain-check-list"></div>
         </div>
       </div>
     </div>
     <div id="ligand-extra-list" class="ligand-extra-list"></div>
     <div class="ligand-upload-actions" id="ligand-mol2-actions">
       <button type="button" class="btn btn-sm btn-secondary" id="btn-add-ligand">+ 添加配体（最多 3 个）</button>
-      <p class="hint ligand-upload-hint">多配体时请在 PyMOL / ChimeraX 中预先对齐坐标后再分别导出 MOL2；提交后残基名将自动设为 LIG1、LIG2、LIG3。
-        若手头是对接复合物，请先 <a class="guide-text-link" href="/#guide-prep-video">观看拆分教程视频</a>（导出 PDB + SDF，再转 MOL2 上传）。</p>
+      <p class="hint ligand-upload-hint">多配体时请在 PyMOL / ChimeraX 中预先对齐坐标；复合物模式可从同一 PDB 按 HETATM 残基自动拆分并转 MOL2。
+        分开上传时请先 <a class="guide-text-link" href="/#guide-prep-video">观看拆分教程视频</a>（导出 PDB + SDF，再转 MOL2）。</p>
     </div>
   </section>
 
@@ -1021,7 +1025,7 @@
 <script src="/js/viewer.js?v=20260716e"></script>
 <script src="/js/payment.js?v=20260716k"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
-<script src="/js/app.js?v=20260716j"></script>
+<script src="/js/app.js?v=20260716n"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
 </html>
