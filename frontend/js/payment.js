@@ -317,6 +317,84 @@
 
   loadConfig();
 
+  /**
+   * 从状态页/我的任务深链恢复支付：/?task=JobID#prepare
+   */
+  function resumePaymentFromQuery() {
+    var params = new URLSearchParams(location.search);
+    var tid = (params.get("task") || params.get("pay") || "").trim();
+    if (!tid) return;
+
+    function run() {
+      if (!window.WebMdAuth || !window.WebMdAuth.getToken()) {
+        if (window.WebMdAuth) window.WebMdAuth.requireLogin();
+        return;
+      }
+      if (window.WebMD && typeof window.WebMD.switchView === "function") {
+        window.WebMD.switchView("prepare");
+      }
+      var sectionDownload = document.getElementById("section-download");
+      if (sectionDownload) sectionDownload.classList.remove("hidden");
+      var progressArea = document.getElementById("progress-area");
+      if (progressArea) {
+        progressArea.classList.remove("hidden");
+        var tidEl = document.getElementById("task-id-display");
+        if (tidEl) {
+          tidEl.innerHTML =
+            'Job ID：<a class="task-id-link" href="/status.html?id='
+            + encodeURIComponent(tid)
+            + '"><code>'
+            + tid
+            + "</code></a>";
+        }
+      }
+
+      currentTaskId = tid;
+      var apiFetch = window.WebMdAuth.apiFetch;
+      apiFetch("/api/tasks/" + tid + "/payment")
+        .then(function (r) {
+          if (r.status === 401 || r.status === 403) {
+            window.WebMdAuth.requireLogin();
+            return null;
+          }
+          if (!r.ok) {
+            return r.json().then(function (e) {
+              throw new Error(e.detail || "无法加载支付信息");
+            });
+          }
+          return r.json();
+        })
+        .then(function (data) {
+          if (!data) return;
+          applyPaymentData(tid, data);
+          var status = data.payment_status || (data.paid ? "paid" : "unpaid");
+          if (status === "unpaid" || status === "pending") {
+            showModal(tid, data);
+          }
+        })
+        .catch(function (err) {
+          alert(err.message || "打开支付失败，请从「我的任务」重试");
+        });
+    }
+
+    run();
+    window.addEventListener("webmd-auth-changed", function onAuth() {
+      if (window.WebMdAuth && window.WebMdAuth.getToken()) {
+        window.removeEventListener("webmd-auth-changed", onAuth);
+        run();
+      }
+    });
+  }
+
+  // 等 auth / 视图脚本就绪后再恢复
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      setTimeout(resumePaymentFromQuery, 0);
+    });
+  } else {
+    setTimeout(resumePaymentFromQuery, 0);
+  }
+
   window.PaymentUI = {
     onTaskReady: function (taskId) {
       currentTaskId = taskId;

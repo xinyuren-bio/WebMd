@@ -55,11 +55,14 @@
         html +=
           '<p class="jobs-error">' + escapeHtml(t.error_message) + "</p>";
       }
-      html +=
-        '<p class="jobs-item-actions">'
-        + '<a href="' + href + '">查看进度</a>'
-        + "</p>"
-        + "</li>";
+      var actions = '<a href="' + href + '">查看进度</a>';
+      if (t.status === "completed" && t.payment_status === "unpaid") {
+        actions +=
+          ' · <a href="/?task='
+          + encodeURIComponent(t.task_id)
+          + '#prepare">前往支付</a>';
+      }
+      html += '<p class="jobs-item-actions">' + actions + "</p></li>";
     });
     html += "</ul>";
     content.innerHTML = html;

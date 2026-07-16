@@ -33,7 +33,10 @@
       if (d.payment_status === "unpaid" && d.can_pay) {
         var payAmt = d.payment_amount != null ? Number(d.payment_amount).toFixed(0) : "66/240";
         html += "<p class=\"status-hint\">请登录网站完成 ¥" + payAmt + " 支付后，方可下载文件包并启动 MD 模拟。</p>";
-        html += "<p><a class=\"btn btn-primary\" href=\"/#prepare\">前往支付</a></p>";
+        // 带 Job ID 深链，避免落到 /prepare 静态 404，并自动打开支付弹窗
+        html += "<p><a class=\"btn btn-primary\" href=\"/?task="
+          + encodeURIComponent(taskId)
+          + "#prepare\">前往支付</a></p>";
       } else if (d.payment_status === "pending") {
         html += "<p class=\"status-hint\">已提交付款，等待管理员核实，核实后将自动开始模拟。</p>";
       } else if (d.can_download) {

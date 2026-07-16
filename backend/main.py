@@ -1,8 +1,15 @@
+# ==================================================
+# 功能说明：WebMD FastAPI 入口（路由、静态页、启动恢复任务）
+# 使用方法：uvicorn main:app --host 0.0.0.0 --port 8000
+# 依赖环境：pip/conda 见 backend/requirements.txt
+# 生成时间：2026-07-16
+# ==================================================
 import logging
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.auth import router as auth_router
@@ -44,6 +51,15 @@ except Exception as _e:
 
 app.include_router(auth_router)
 app.include_router(router)
+
+
+@app.get("/prepare")
+async def redirect_prepare(task: str = ""):
+    """兼容误访问 /prepare（无静态页）→ 首页体系准备；可带 task 打开支付。"""
+    if task.strip():
+        return RedirectResponse(url=f"/?task={task.strip()}#prepare", status_code=302)
+    return RedirectResponse(url="/#prepare", status_code=302)
+
 
 frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
 if frontend_dir.exists():
