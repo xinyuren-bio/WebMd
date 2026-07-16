@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>我的任务 · WebMD</title>
+  <link rel="stylesheet" href="/css/style.css?v=20260716j">
+  <link rel="icon" href="/assets/images/logo.png" type="image/png">
+</head>
+<body class="app-shell">
+
+<header class="site-header">
+  <div class="site-header-inner">
+    <a class="site-brand" href="/">
+      <img src="/assets/images/logo.png" alt="" class="site-brand-logo" width="32" height="32">
+      WebMD
+    </a>
+    <nav class="site-nav" aria-label="主功能">
+      <a class="site-nav-link" href="/#prepare">体系准备</a>
+      <a class="site-nav-link" href="/jobs.html" aria-current="page">我的任务</a>
+    </nav>
+    <div class="site-auth" id="auth-guest">
+      <button type="button" class="btn btn-sm btn-secondary" id="btn-login">登录</button>
+      <button type="button" class="btn btn-sm btn-primary" id="btn-register">注册</button>
+    </div>
+    <div class="site-auth hidden" id="auth-user-bar">
+      <a href="/jobs.html" class="btn btn-sm btn-secondary" id="btn-my-jobs">我的任务</a>
+      <span class="site-auth-email" id="auth-user-email"></span>
+      <button type="button" class="btn btn-sm btn-secondary" id="btn-logout">退出</button>
+    </div>
+  </div>
+</header>
+
+<div id="auth-modal" class="payment-modal hidden" role="dialog" aria-modal="true">
+  <div class="payment-modal-backdrop" id="auth-modal-backdrop"></div>
+  <div class="payment-modal-panel auth-modal-panel">
+    <button type="button" class="payment-modal-close" id="auth-modal-close" aria-label="关闭">×</button>
+    <h3 id="auth-modal-title">登录</h3>
+    <label class="auth-label" for="auth-email">邮箱</label>
+    <input type="email" id="auth-email" class="payment-payer-note" autocomplete="username">
+    <label class="auth-label" for="auth-password">密码（至少 6 位）</label>
+    <input type="password" id="auth-password" class="payment-payer-note" autocomplete="current-password">
+    <div id="auth-code-row" class="auth-code-row hidden">
+      <label class="auth-label" for="auth-code">邮箱验证码</label>
+      <div class="auth-code-inputs">
+        <input type="text" id="auth-code" class="payment-payer-note" maxlength="6" placeholder="6 位数字" inputmode="numeric" autocomplete="one-time-code">
+        <button type="button" class="btn btn-secondary" id="btn-send-code">获取验证码</button>
+      </div>
+      <p class="auth-code-hint">验证码将发送至您的邮箱，10 分钟内有效</p>
+    </div>
+    <p class="auth-switch">没有账号？<a href="#" id="auth-switch-register">注册</a> · 已有账号？<a href="#" id="auth-switch-login">登录</a></p>
+    <div class="payment-modal-actions">
+      <button type="button" class="btn btn-primary" id="auth-submit">登录</button>
+      <button type="button" class="btn btn-secondary" id="auth-cancel">取消</button>
+    </div>
+    <p class="payment-error hidden" id="auth-error"></p>
+  </div>
+</div>
+
+<main class="jobs-page">
+  <h1>我的任务</h1>
+  <p class="jobs-lead">点击 <strong>Job ID</strong> 可查看该任务的进度与状态。</p>
+  <div id="jobs-content">
+    <p class="jobs-empty">加载中…</p>
+  </div>
+  <p class="jobs-back"><a href="/">返回 WebMD 首页</a></p>
+</main>
+
+<script src="/js/auth.js?v=20260716j"></script>
+<script src="/js/jobs.js?v=20260716j"></script>
+</body>
+</html>

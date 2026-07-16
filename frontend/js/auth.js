@@ -12,12 +12,19 @@
     }
   }
 
+  function notifyAuthChanged() {
+    try {
+      window.dispatchEvent(new Event("webmd-auth-changed"));
+    } catch (e) {}
+  }
+
   function setSession(token, user) {
     try {
       localStorage.setItem(TOKEN_KEY, token);
       localStorage.setItem(USER_KEY, JSON.stringify(user || {}));
     } catch (e) {}
     updateHeaderUI();
+    notifyAuthChanged();
   }
 
   function clearSession() {
@@ -26,6 +33,7 @@
       localStorage.removeItem(USER_KEY);
     } catch (e) {}
     updateHeaderUI();
+    notifyAuthChanged();
   }
 
   function getUser() {

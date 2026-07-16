@@ -350,6 +350,58 @@ async def create_task(
     return task.to_dict()
 
 
+def _task_list_item(task: Task) -> dict:
+    """组装「我的任务」列表项（不含日志等大字段）。"""
+    sim_ns = task.params.get("simulation_time_ns")
+    lt = (task.params.get("ligand_type") or "").strip().lower()
+    if not lt:
+        if task.params.get("is_cyclic_peptide"):
+            lt = "cyclic"
+        elif task.params.get("is_linear_peptide"):
+            lt = "linear"
+        else:
+            lt = "mol2"
+    ligand_label = {
+        "mol2": "小分子",
+        "cyclic": "环肽",
+        "linear": "线形肽",
+    }.get(lt, lt or "—")
+    return {
+        "task_id": task.task_id,
+        "status": task.status.value,
+        "status_label": task.status.label,
+        "payment_status": task.payment_status,
+        "paid": task.paid,
+        "md_status": task.md_status,
+        "md_status_label": {
+            "none": "未开始",
+            "queued": "排队等待",
+            "running": "模拟运行中",
+            "completed": "模拟已完成",
+            "failed": "模拟失败",
+        }.get(task.md_status, task.md_status),
+        "simulation_time_ns": sim_ns,
+        "ligand_type": lt,
+        "ligand_label": ligand_label,
+        "created_at": task.created_at,
+        "error_message": (task.error_message or "")[:200],
+        "status_url": f"/status.html?id={task.task_id}",
+    }
+
+
+@router.get("/tasks")
+async def list_my_tasks(
+    user: dict = Depends(get_current_user),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    """列出当前登录用户提交的任务（按创建时间倒序）。"""
+    uid = user["user_id"]
+    mine = [t for t in tasks.values() if t.user_id == uid]
+    mine.sort(key=lambda t: t.created_at or 0.0, reverse=True)
+    items = [_task_list_item(t) for t in mine[:limit]]
+    return {"tasks": items, "total": len(mine)}
+
+
 @router.get("/tasks/{task_id}")
 async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     task = _task_owner_or_404(task_id, user)

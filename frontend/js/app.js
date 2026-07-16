@@ -556,7 +556,17 @@
       }
 
       var task = await resp.json();
-      taskIdDisplay.textContent = "任务 ID: " + task.task_id;
+      // Job ID 可点击进入状态页；并提供「我的任务」入口
+      if (taskIdDisplay) {
+        var tid = task.task_id;
+        taskIdDisplay.innerHTML =
+          'Job ID：<a class="task-id-link" href="/status.html?id='
+          + encodeURIComponent(tid)
+          + '" target="_blank" rel="noopener"><code>'
+          + tid
+          + "</code></a>"
+          + ' · <a class="task-id-link" href="/jobs.html">我的任务</a>';
+      }
       showTaskQr(task.task_id);
       pollTask(task.task_id);
     } catch (e) {

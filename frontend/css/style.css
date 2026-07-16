@@ -408,6 +408,15 @@ body.workspace-intro .site-nav-link.active {
   cursor: pointer;
   border-radius: 7px;
   transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+  text-decoration: none;
+  display: inline-block;
+}
+
+a.site-nav-link[aria-current="page"] {
+  color: var(--color-text);
+  font-weight: 600;
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .site-nav-link:hover {
@@ -1713,6 +1722,110 @@ body.workspace-guide #app {
   color: var(--color-text-muted);
   font-family: var(--font-mono);
   margin-top: 4px;
+}
+
+.task-id-link {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.task-id-link code {
+  font-family: var(--font-mono);
+}
+
+/* ---- 我的任务 / Job ID 列表 ---- */
+.jobs-page {
+  max-width: 720px;
+  margin: 2rem auto 3rem;
+  padding: 0 1.25rem;
+}
+
+.jobs-page h1 {
+  font-size: 1.35rem;
+  margin: 0 0 0.35rem;
+}
+
+.jobs-lead {
+  color: var(--color-text-secondary);
+  font-size: 0.9rem;
+  margin: 0 0 1.25rem;
+}
+
+.jobs-empty {
+  color: var(--color-text-secondary);
+  padding: 1.5rem 0;
+}
+
+.jobs-back {
+  margin-top: 1.75rem;
+  font-size: 0.875rem;
+}
+
+.jobs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.jobs-item {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.jobs-item-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+
+.jobs-id {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.jobs-id:hover {
+  text-decoration: underline;
+}
+
+.jobs-id code {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+.jobs-status {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.jobs-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 0.4rem;
+  font-size: 0.8125rem;
+  color: #888;
+}
+
+.jobs-error {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+  color: #991b1b;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.jobs-item-actions {
+  margin: 0.45rem 0 0;
+  font-size: 0.8125rem;
+}
+
+.jobs-item-actions a {
+  color: var(--color-primary);
 }
 
 /* ---- Error ---- */

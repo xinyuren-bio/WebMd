@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260716i">
+<link rel="stylesheet" href="/css/style.css?v=20260716j">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -26,6 +26,7 @@
       <button type="button" class="btn btn-sm btn-primary" id="btn-register">注册</button>
     </div>
     <div class="site-auth hidden" id="auth-user-bar">
+      <a href="/jobs.html" class="btn btn-sm btn-secondary" id="btn-my-jobs">我的任务</a>
       <span class="site-auth-email" id="auth-user-email"></span>
       <button type="button" class="btn btn-sm btn-secondary" id="btn-logout">退出</button>
     </div>
@@ -755,7 +756,7 @@
       <dt>3D 预览空白？</dt>
       <dd>确认两个文件均已上传；尝试刷新页面或更换浏览器（推荐 Chrome / Edge）。</dd>
       <dt>二维码丢了还能查进度吗？</dt>
-      <dd>状态页链接格式为 <code>/status.html?task=任务ID</code>，知道任务 ID 即可访问。</dd>
+      <dd>状态页链接格式为 <code>/status.html?id=任务ID</code>；登录后可在「我的任务」中点击 Job ID 查看。</dd>
       <dt>支付后多久能下载？</dt>
       <dd>管理员核实转账后自动解锁，请确保付款备注含任务 ID。</dd>
       <dt>还有问题？</dt>
@@ -1014,13 +1015,13 @@
 <script src="/js/analytics.js"></script>
 <script src="/js/site_announcement.js?v=20260715"></script>
 <script src="/js/sim_notice.js?v=20260714"></script>
-<script src="/js/auth.js"></script>
+<script src="/js/auth.js?v=20260716j"></script>
 <script src="/js/main_tabs.js?v=20260714"></script>
 <script src="/js/ngl.js"></script>
 <script src="/js/viewer.js?v=20260716e"></script>
 <script src="/js/payment.js"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
-<script src="/js/app.js?v=20260716i"></script>
+<script src="/js/app.js?v=20260716j"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
 </html>
