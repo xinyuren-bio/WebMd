@@ -175,6 +175,9 @@ async def create_task(
     ligand_type: str = Form(default="mol2"),
     is_cyclic_peptide: str = Form(default="0"),
     is_linear_peptide: str = Form(default="0"),
+    peptide_upload_mode: str = Form(default="separate"),
+    protein_chains: str = Form(default=""),
+    peptide_chain: str = Form(default=""),
     temperature: float = Form(default=DEFAULT_PARAMS["temperature"]),
     pressure: float = Form(default=DEFAULT_PARAMS["pressure"]),
     timestep: float = Form(default=DEFAULT_PARAMS["timestep"]),
@@ -222,18 +225,62 @@ async def create_task(
     work_dir = Path(TASKS_DIR) / task_id
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # 蛋白文件名消毒，避免空格
-    pdb_raw = Path(pdb_file.filename or "protein.pdb").name
-    if not pdb_raw.lower().endswith(".pdb"):
-        raise HTTPException(status_code=400, detail="蛋白须为 PDB 格式")
-    pdb_path = work_dir / "protein.pdb"
-    with open(pdb_path, "wb") as f:
-        f.write(await pdb_file.read())
+    pep_mode = (peptide_upload_mode or "separate").strip().lower()
+    if pep_mode not in ("separate", "complex"):
+        pep_mode = "separate"
 
     mol2_paths: list[str] = []
     cyclic_pdb_path: Optional[str] = None
+    pdb_path = work_dir / "protein.pdb"
 
-    if is_pep:
+    if is_pep and pep_mode == "complex":
+        # 复合物 PDB：用户选择蛋白链与肽链后由服务端拆分
+        from engine.pdb_chains import split_complex
+
+        raw = Path(pdb_file.filename or "complex.pdb").name
+        if not raw.lower().endswith(".pdb"):
+            raise HTTPException(status_code=400, detail="复合物须为 PDB 格式")
+        complex_path = work_dir / "complex_upload.pdb"
+        with open(complex_path, "wb") as f:
+            f.write(await pdb_file.read())
+
+        def _norm_ch(s: str) -> str:
+            t = (s or "").strip()
+            if t in ("", "_", "(空白链号)"):
+                return " "
+            return t[:1]
+
+        # 前端空白链用 "_"；多链用逗号分隔
+        raw_prot = [x for x in (protein_chains or "").split(",") if x != ""]
+        prot_list = [_norm_ch(x) for x in raw_prot]
+        if not (peptide_chain or "").strip() and peptide_chain != "_":
+            raise HTTPException(status_code=400, detail="复合物模式请选择肽链")
+        pep_ch = _norm_ch(peptide_chain)
+        if not prot_list:
+            raise HTTPException(status_code=400, detail="复合物模式请至少选择一条蛋白链")
+        try:
+            prot_out, pep_out = split_complex(
+                complex_path, prot_list, pep_ch, work_dir,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        # split_complex 已写入 protein.pdb；肽文件再拷贝为标准上传名
+        pdb_path = Path(prot_out)
+        cyc_dest = work_dir / (
+            "cyclic_peptide_upload.pdb" if is_cyc else "linear_peptide_upload.pdb"
+        )
+        if Path(pep_out).resolve() != cyc_dest.resolve():
+            cyc_dest.write_bytes(Path(pep_out).read_bytes())
+        cyclic_pdb_path = str(cyc_dest)
+    else:
+        # 蛋白文件名消毒，避免空格
+        pdb_raw = Path(pdb_file.filename or "protein.pdb").name
+        if not pdb_raw.lower().endswith(".pdb"):
+            raise HTTPException(status_code=400, detail="蛋白须为 PDB 格式")
+        with open(pdb_path, "wb") as f:
+            f.write(await pdb_file.read())
+
+    if is_pep and pep_mode != "complex":
         label = "环肽" if is_cyc else "线形肽"
         if cyclic_peptide_file is None or not cyclic_peptide_file.filename:
             raise HTTPException(status_code=400, detail=f"{label}模式请上传肽 PDB 文件")
@@ -246,7 +293,7 @@ async def create_task(
         with open(cyc_dest, "wb") as f:
             f.write(await cyclic_peptide_file.read())
         cyclic_pdb_path = str(cyc_dest)
-    else:
+    elif not is_pep:
         for idx, up in enumerate([mol2_file, mol2_file_2, mol2_file_3], 1):
             if up is None or not up.filename:
                 continue
@@ -280,6 +327,9 @@ async def create_task(
         "ligand_type": lt,
         "is_cyclic_peptide": is_cyc,
         "is_linear_peptide": is_lin,
+        "peptide_upload_mode": pep_mode if is_pep else "separate",
+        "protein_chains": protein_chains if is_pep and pep_mode == "complex" else "",
+        "peptide_chain": peptide_chain if is_pep and pep_mode == "complex" else "",
     }
 
     task.work_dir = str(work_dir)

@@ -1,5 +1,5 @@
 # ==================================================
-# 功能说明：使用 PDBFixer 修复蛋白结构，并修正组氨酸质子化命名
+# 功能说明：使用 PDBFixer 修复蛋白（补内部缺失残基/原子/氢）并修正组氨酸命名
 # 使用方法：由 pipeline 调用 prepare_protein(pdb_path, work_dir)
 # 依赖环境：pip install pdbfixer openmm
 # 生成时间：2026-06-23
@@ -13,6 +13,41 @@ from pdbfixer import PDBFixer
 from openmm.app import PDBFile
 
 logger = logging.getLogger(__name__)
+
+# 单次补全缺失残基上限，避免异常 PDB 补出超长假 loop
+_MAX_GAP_RESIDUES = 20
+
+
+def _keep_internal_missing_residues(fixer: PDBFixer) -> list[str]:
+    """仿 PRISM：只保留链内部空洞，去掉 N/C 端缺失段，返回将补全的摘要。"""
+    chains = list(fixer.topology.chains())
+    kept: list[str] = []
+    drop_keys = []
+    for key, names in list(fixer.missingResidues.items()):
+        chain_i, res_i = key
+        if chain_i < 0 or chain_i >= len(chains):
+            drop_keys.append(key)
+            continue
+        n_res = len(list(chains[chain_i].residues()))
+        # res_i==0 或 ==n_res 表示末端延伸，不自动补（与常见 OpenMM/PRISM 用法一致）
+        if res_i == 0 or res_i >= n_res:
+            drop_keys.append(key)
+            continue
+        if len(names) > _MAX_GAP_RESIDUES:
+            logger.warning(
+                "链 %d 内部缺失 %d 个残基超过上限 %d，跳过该段以免乱补长 loop",
+                chain_i,
+                len(names),
+                _MAX_GAP_RESIDUES,
+            )
+            drop_keys.append(key)
+            continue
+        ch_id = chains[chain_i].id if getattr(chains[chain_i], "id", None) else str(chain_i)
+        kept.append(f"chain={ch_id} @{res_i}:{'/'.join(names)}")
+
+    for k in drop_keys:
+        del fixer.missingResidues[k]
+    return kept
 
 
 def _fix_histidine_protonation(pdb_path: str) -> None:
@@ -83,12 +118,26 @@ def _fix_histidine_protonation(pdb_path: str) -> None:
 
 
 def prepare_protein(pdb_path: str, work_dir: str) -> str:
-    """PDBFixer 修复蛋白并修正组氨酸命名，返回修复后 PDB 路径。"""
+    """PDBFixer 修复蛋白并修正组氨酸命名，返回修复后 PDB 路径。
+
+    对齐 PRISM：对链内部缺失残基执行 addMissingResidues，再补重原子与氢。
+    """
     work = Path(work_dir)
 
     fixer = PDBFixer(filename=pdb_path)
     fixer.findMissingResidues()
+    gaps = _keep_internal_missing_residues(fixer)
+    if gaps:
+        logger.info("将补全内部缺失残基 %d 段: %s", len(gaps), "; ".join(gaps[:12]))
+        fixer.addMissingResidues()
+    else:
+        logger.info("未发现需补全的内部缺失残基（或仅有末端空洞已跳过）")
+
     fixer.findNonstandardResidues()
+    if fixer.nonstandardResidues:
+        logger.info("替换非标准残基 %d 处", len(fixer.nonstandardResidues))
+        fixer.replaceNonstandardResidues()
+
     fixer.findMissingAtoms()
     fixer.addMissingAtoms()
     fixer.addMissingHydrogens(pH=7.0)

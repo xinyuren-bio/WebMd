@@ -98,6 +98,49 @@ body {
   margin: 0 0 0.85rem;
 }
 
+.peptide-mode-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.radio-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.chain-pick-block {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 0.5rem 0 1rem;
+}
+
+@media (max-width: 700px) {
+  .chain-pick-block {
+    grid-template-columns: 1fr;
+  }
+}
+
+.chain-check-list {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.chain-check-list label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
 .cyclic-peptide-toggle {
   display: flex;
   align-items: center;

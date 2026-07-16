@@ -10,10 +10,17 @@
   const peptideInput = document.getElementById("peptide-file");
   const peptideName = document.getElementById("peptide-file-name");
   const peptideLabel = document.getElementById("peptide-file-label");
+  const pdbFileLabel = document.getElementById("pdb-file-label");
   const mol2Group = document.getElementById("ligand-mol2-group");
   const peptideGroup = document.getElementById("ligand-peptide-group");
   const mol2Actions = document.getElementById("ligand-mol2-actions");
   const uploadSubtitle = document.getElementById("upload-subtitle");
+  const peptideModeGroup = document.getElementById("peptide-upload-mode-group");
+  const complexChainGroup = document.getElementById("complex-chain-group");
+  const proteinChainChecks = document.getElementById("protein-chain-checks");
+  const peptideChainRadios = document.getElementById("peptide-chain-radios");
+  var cachedChains = [];
+  var splitPreviewToken = 0;
 
   const btnSubmit = document.getElementById("btn-submit");
   const submitHint = document.getElementById("submit-hint");
@@ -65,8 +72,12 @@
   pdbInput.addEventListener("change", function () {
     pdbName.textContent = this.files[0] ? this.files[0].name : "未选择文件";
     pdbName.classList.toggle("has-file", !!this.files[0]);
-    updateSubmitButton();
-    updatePreview();
+    if (isPeptideMode() && getPeptideUploadMode() === "complex") {
+      refreshComplexChains();
+    } else {
+      updateSubmitButton();
+      updatePreview();
+    }
   });
 
   mol2Input.addEventListener("change", function () {
@@ -100,17 +111,216 @@
     return getLigandType() === "cyclic";
   }
 
+  function getPeptideUploadMode() {
+    var el = document.querySelector('input[name="peptide-upload-mode"]:checked');
+    return el ? el.value : "separate";
+  }
+
+  function chainKey(ch) {
+    return ch === " " || ch === "" ? "_" : ch;
+  }
+
+  function parsePdbChains(text) {
+    var map = {};
+    var lines = text.split(/\r?\n/);
+    for (var i = 0; i < lines.length; i++) {
+      var ln = lines[i];
+      if (ln.indexOf("ATOM") !== 0 && ln.indexOf("HETATM") !== 0) continue;
+      if (ln.length < 26) continue;
+      var ch = ln.length > 21 ? ln.charAt(21) : " ";
+      var rn = ln.substring(17, 20).trim().toUpperCase();
+      var ri = ln.substring(22, 26).trim();
+      if (!map[ch]) map[ch] = { chain: ch, residues: {}, n_atoms: 0 };
+      map[ch].n_atoms += 1;
+      map[ch].residues[ri + "|" + rn] = rn;
+    }
+    var out = [];
+    Object.keys(map).forEach(function (k) {
+      var rns = [];
+      Object.keys(map[k].residues).forEach(function (rk) {
+        rns.push(map[k].residues[rk]);
+      });
+      out.push({
+        chain: map[k].chain,
+        label: map[k].chain.trim() ? map[k].chain : "(空白链号)",
+        n_residues: rns.length,
+        n_atoms: map[k].n_atoms,
+        resnames_head: rns.slice(0, 6),
+      });
+    });
+    out.sort(function (a, b) {
+      return String(a.label).localeCompare(String(b.label));
+    });
+    return out;
+  }
+
+  function splitPdbByChains(text, protKeys, pepKey) {
+    var protSet = {};
+    protKeys.forEach(function (k) {
+      protSet[k === "_" ? " " : k] = true;
+    });
+    var pepCh = pepKey === "_" ? " " : pepKey;
+    var protLines = [];
+    var pepLines = [];
+    text.split(/\r?\n/).forEach(function (ln) {
+      if (ln.indexOf("ATOM") !== 0 && ln.indexOf("HETATM") !== 0) return;
+      if (ln.length < 22) return;
+      var ch = ln.charAt(21);
+      var out = ln;
+      if (out.indexOf("HETATM") === 0) out = "ATOM  " + out.slice(6);
+      if (!/\n$/.test(out)) out += "\n";
+      if (protSet[ch]) protLines.push(out);
+      if (ch === pepCh) pepLines.push(out);
+    });
+    if (!protLines.length || !pepLines.length) {
+      throw new Error("按链拆分失败：请确认蛋白链与肽链选择正确");
+    }
+    protLines.push("END\n");
+    pepLines.push("END\n");
+    return {
+      protein: new Blob([protLines.join("")], { type: "chemical/x-pdb" }),
+      peptide: new Blob([pepLines.join("")], { type: "chemical/x-pdb" }),
+    };
+  }
+
+  function getSelectedProteinChains() {
+    if (!proteinChainChecks) return [];
+    return Array.prototype.map
+      .call(proteinChainChecks.querySelectorAll('input[type="checkbox"]:checked'), function (el) {
+        return el.value;
+      });
+  }
+
+  function getSelectedPeptideChain() {
+    if (!peptideChainRadios) return "";
+    var el = peptideChainRadios.querySelector('input[type="radio"]:checked');
+    return el ? el.value : "";
+  }
+
+  function renderChainPickers(chains) {
+    cachedChains = chains || [];
+    if (!proteinChainChecks || !peptideChainRadios) return;
+    if (!cachedChains.length) {
+      proteinChainChecks.innerHTML = "<p class=\"hint\">未识别到链，请检查 PDB</p>";
+      peptideChainRadios.innerHTML = "";
+      return;
+    }
+    // 默认：残基数最多的为蛋白，最少的为肽（可改）
+    var sorted = cachedChains.slice().sort(function (a, b) {
+      return b.n_residues - a.n_residues;
+    });
+    var defaultPep = sorted[sorted.length - 1];
+    var defaultProt = sorted.filter(function (c) {
+      return c.chain !== defaultPep.chain;
+    });
+    if (!defaultProt.length) defaultProt = [sorted[0]];
+
+    proteinChainChecks.innerHTML = cachedChains
+      .map(function (c) {
+        var key = chainKey(c.chain);
+        var checked = defaultProt.some(function (p) {
+          return p.chain === c.chain;
+        });
+        return (
+          '<label><input type="checkbox" name="protein-chain" value="' +
+          key +
+          '"' +
+          (checked ? " checked" : "") +
+          "> 链 <code>" +
+          c.label +
+          "</code> · " +
+          c.n_residues +
+          " 残基 / " +
+          c.n_atoms +
+          " 原子" +
+          (c.resnames_head && c.resnames_head.length
+            ? " · " + c.resnames_head.join("-")
+            : "") +
+          "</label>"
+        );
+      })
+      .join("");
+
+    peptideChainRadios.innerHTML = cachedChains
+      .map(function (c) {
+        var key = chainKey(c.chain);
+        var checked = c.chain === defaultPep.chain;
+        return (
+          '<label><input type="radio" name="peptide-chain" value="' +
+          key +
+          '"' +
+          (checked ? " checked" : "") +
+          "> 链 <code>" +
+          c.label +
+          "</code> · " +
+          c.n_residues +
+          " 残基 / " +
+          c.n_atoms +
+          " 原子</label>"
+        );
+      })
+      .join("");
+
+    proteinChainChecks.querySelectorAll("input").forEach(function (el) {
+      el.addEventListener("change", function () {
+        updateSubmitButton();
+        updatePreview();
+      });
+    });
+    peptideChainRadios.querySelectorAll("input").forEach(function (el) {
+      el.addEventListener("change", function () {
+        updateSubmitButton();
+        updatePreview();
+      });
+    });
+  }
+
+  function refreshComplexChains() {
+    var f = pdbInput && pdbInput.files[0];
+    if (!f) {
+      renderChainPickers([]);
+      updateSubmitButton();
+      updatePreview();
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      try {
+        renderChainPickers(parsePdbChains(String(reader.result || "")));
+      } catch (e) {
+        renderChainPickers([]);
+        showError(e.message || "解析复合物链失败");
+      }
+      updateSubmitButton();
+      updatePreview();
+    };
+    reader.onerror = function () {
+      showError("读取复合物 PDB 失败");
+      updateSubmitButton();
+    };
+    reader.readAsText(f);
+  }
+
   function syncLigandTypeUi() {
     var t = getLigandType();
     var pep = t === "cyclic" || t === "linear";
+    var complexMode = pep && getPeptideUploadMode() === "complex";
     if (mol2Group) mol2Group.classList.toggle("hidden", pep);
-    if (peptideGroup) peptideGroup.classList.toggle("hidden", !pep);
+    if (peptideModeGroup) peptideModeGroup.classList.toggle("hidden", !pep);
+    if (peptideGroup) peptideGroup.classList.toggle("hidden", !pep || complexMode);
+    if (complexChainGroup) complexChainGroup.classList.toggle("hidden", !complexMode);
     if (mol2Actions) mol2Actions.classList.toggle("hidden", pep);
     if (peptideLabel) {
       peptideLabel.textContent = t === "linear" ? "线形肽 · PDB" : "环肽 · PDB";
     }
+    if (pdbFileLabel) {
+      pdbFileLabel.textContent = complexMode ? "复合物 PDB 文件" : "蛋白 PDB 文件";
+    }
     if (uploadSubtitle) {
-      if (t === "cyclic") {
+      if (complexMode) {
+        uploadSubtitle.textContent =
+          "上传蛋白+肽复合物 PDB，选择蛋白链与肽链（标准氨基酸；相对位置已固定在同一文件中）";
+      } else if (t === "cyclic") {
         uploadSubtitle.textContent =
           "蛋白 PDB + 环肽 PDB（标准氨基酸，头尾成环；请预先摆好相对位置）";
       } else if (t === "linear") {
@@ -124,13 +334,13 @@
     if (ligandTypeHint) {
       if (t === "cyclic") {
         ligandTypeHint.textContent =
-          "请上传仅含环肽的 PDB（勿用 MOL2、勿含受体）。ff14SB + 自动连接首尾 N–C；暂不支持侧链杂原子修饰。";
+          "环肽可用分开上传或复合物按链拆分。ff14SB + 自动连接首尾 N–C；暂不支持侧链杂原子修饰。";
       } else if (t === "linear") {
         ligandTypeHint.textContent =
-          "请上传仅含线形肽的 PDB（勿用 MOL2、勿含受体）。ff14SB，保留 N/C 末端，不成环；暂不支持非标准氨基酸。";
+          "线形肽可用分开上传或复合物按链拆分。ff14SB，保留 N/C 末端；蛋白将自动补全链内部缺失残基。";
       } else {
         ligandTypeHint.textContent =
-          "小分子请上传 MOL2；肽类请上传仅含肽链的 PDB（标准氨基酸，勿含受体蛋白）。";
+          "小分子请上传 MOL2；肽类可分开上传，或上传复合物 PDB 后选择蛋白链与肽链。";
       }
     }
     var addH = document.getElementById("ligand-add-h");
@@ -138,13 +348,20 @@
       addH.disabled = pep;
       if (pep) addH.checked = false;
     }
-    updateSubmitButton();
-    updatePreview();
+    if (complexMode && pdbInput && pdbInput.files[0]) {
+      refreshComplexChains();
+    } else {
+      updateSubmitButton();
+      updatePreview();
+    }
   }
 
   if (ligandTypeSel) {
     ligandTypeSel.addEventListener("change", syncLigandTypeUi);
   }
+  document.querySelectorAll('input[name="peptide-upload-mode"]').forEach(function (el) {
+    el.addEventListener("change", syncLigandTypeUi);
+  });
 
   window.WebMD = window.WebMD || {};
   window.WebMD.onLigandChange = function () {
@@ -162,6 +379,34 @@
   function updatePreview() {
     if (!window.MdViewer) return;
     if (isPeptideMode()) {
+      if (getPeptideUploadMode() === "complex") {
+        var f = pdbInput.files[0];
+        var pChains = getSelectedProteinChains();
+        var pepCh = getSelectedPeptideChain();
+        if (!f || !pChains.length || !pepCh || !window.MdViewer.loadFromPdbs) {
+          window.MdViewer.hide();
+          return;
+        }
+        var token = ++splitPreviewToken;
+        var reader = new FileReader();
+        reader.onload = function () {
+          if (token !== splitPreviewToken) return;
+          try {
+            var parts = splitPdbByChains(String(reader.result || ""), pChains, pepCh);
+            var protFile = new File([parts.protein], "protein_split.pdb", {
+              type: "chemical/x-pdb",
+            });
+            var pepFile = new File([parts.peptide], "peptide_split.pdb", {
+              type: "chemical/x-pdb",
+            });
+            window.MdViewer.loadFromPdbs(protFile, pepFile);
+          } catch (e) {
+            window.MdViewer.hide();
+          }
+        };
+        reader.readAsText(f);
+        return;
+      }
       if (
         pdbInput.files[0] &&
         peptideInput &&
@@ -185,7 +430,18 @@
   function updateSubmitButton() {
     var ready;
     if (isPeptideMode()) {
-      ready = !!(pdbInput.files[0] && peptideInput && peptideInput.files[0]);
+      if (getPeptideUploadMode() === "complex") {
+        var pcs = getSelectedProteinChains();
+        var pep = getSelectedPeptideChain();
+        ready = !!(
+          pdbInput.files[0] &&
+          pcs.length &&
+          pep &&
+          pcs.indexOf(pep) < 0
+        );
+      } else {
+        ready = !!(pdbInput.files[0] && peptideInput && peptideInput.files[0]);
+      }
     } else {
       ready = !!(pdbInput.files[0] && getMol2Files().length > 0);
     }
@@ -195,6 +451,8 @@
       submitHint.textContent = "请先登录后再提交";
     } else if (ready) {
       submitHint.textContent = "文件已就绪，点击提交";
+    } else if (isPeptideMode() && getPeptideUploadMode() === "complex") {
+      submitHint.textContent = "请上传复合物 PDB，并选择蛋白链与肽链（不可重复）";
     } else if (getLigandType() === "cyclic") {
       submitHint.textContent = "请先上传蛋白 PDB 与环肽 PDB";
     } else if (getLigandType() === "linear") {
@@ -227,12 +485,25 @@
       ligand_type: getLigandType(),
       is_cyclic_peptide: getLigandType() === "cyclic" ? "1" : "0",
       is_linear_peptide: getLigandType() === "linear" ? "1" : "0",
+      peptide_upload_mode: isPeptideMode() ? getPeptideUploadMode() : "separate",
+      protein_chains: "",
+      peptide_chain: "",
     };
   }
 
   btnSubmit.addEventListener("click", async function () {
     if (isPeptideMode()) {
-      if (!pdbInput.files[0] || !peptideInput || !peptideInput.files[0]) return;
+      if (getPeptideUploadMode() === "complex") {
+        if (!pdbInput.files[0] || !getSelectedProteinChains().length || !getSelectedPeptideChain()) {
+          return;
+        }
+        if (getSelectedProteinChains().indexOf(getSelectedPeptideChain()) >= 0) {
+          showError("肽链不能与蛋白链重复，请重新选择");
+          return;
+        }
+      } else if (!pdbInput.files[0] || !peptideInput || !peptideInput.files[0]) {
+        return;
+      }
     } else if (!pdbInput.files[0] || !getMol2Files().length) {
       return;
     }
@@ -242,6 +513,10 @@
     if (params.simulation_time_ns !== 10 && params.simulation_time_ns !== 100 && params.simulation_time_ns !== 200) {
       showError("模拟时长仅支持 10 ns、100 ns 或 200 ns");
       return;
+    }
+    if (isPeptideMode() && getPeptideUploadMode() === "complex") {
+      params.protein_chains = getSelectedProteinChains().join(",");
+      params.peptide_chain = getSelectedPeptideChain();
     }
 
     errorArea.classList.add("hidden");
@@ -254,8 +529,10 @@
     var formData = new FormData();
     formData.append("pdb_file", pdbInput.files[0]);
     if (isPeptideMode()) {
-      // 后端字段名沿用 cyclic_peptide_file，线形/环肽共用上传槽
-      formData.append("cyclic_peptide_file", peptideInput.files[0]);
+      if (getPeptideUploadMode() === "separate") {
+        // 后端字段名沿用 cyclic_peptide_file，线形/环肽共用上传槽
+        formData.append("cyclic_peptide_file", peptideInput.files[0]);
+      }
     } else if (window.WebMD && window.WebMD.appendMol2ToFormData) {
       window.WebMD.appendMol2ToFormData(formData);
     } else {
