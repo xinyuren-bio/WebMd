@@ -164,7 +164,10 @@ def _enrich_charge_confirm(task: Task) -> dict | None:
         conf.setdefault("sqm_excerpt", "（无 sqm.out）")
         conf.setdefault("antechamber_excerpt", "（无 antechamber 日志）")
         return conf
-    diag = collect_charge_failure_diagnostics(sub)
+    diag = collect_charge_failure_diagnostics(
+        sub,
+        extra_text="\n".join(task.log_lines[-80:] if task.log_lines else []),
+    )
     conf["diagnosis_key"] = diag["diagnosis_key"]
     conf["diagnosis_label"] = diag["diagnosis_label"]
     conf["sqm_excerpt"] = diag["sqm_excerpt"]

@@ -46,7 +46,7 @@ _DIAG_RULES: list[tuple[str, str, tuple[str, ...]]] = [
     (
         "bond_type",
         "无法分配键型（cannot assign bond type）",
-        ("cannot assign bond type", "could not assign bond type", "bondtype"),
+        ("cannot assign bond type", "could not assign bond type"),
     ),
 ]
 
@@ -234,7 +234,19 @@ def _tail_error_lines(text: str, *, max_lines: int = 30) -> str:
     return "\n".join(lines[-max_lines:])
 
 
-def collect_charge_failure_diagnostics(lig_dir: Path | str) -> dict[str, Any]:
+def diagnose_from_text(text: str) -> tuple[str, str]:
+    """从任意日志文本归类常见失败原因。"""
+    combined = (text or "").lower()
+    for key, label, patterns in _DIAG_RULES:
+        if any(p in combined for p in patterns):
+            return key, label
+    return "unknown", "未归类（请查看下方完整日志）"
+
+
+def collect_charge_failure_diagnostics(
+    lig_dir: Path | str,
+    extra_text: str = "",
+) -> dict[str, Any]:
     """汇总 sqm.out 与 antechamber 日志末尾，并归类常见失败原因。"""
     lig = Path(lig_dir)
     sqm_text = ""
@@ -252,17 +264,30 @@ def collect_charge_failure_diagnostics(lig_dir: Path | str) -> dict[str, Any]:
             ante_text = fp.read_text(encoding="utf-8", errors="replace")
             break
 
-    combined = (sqm_text + "\n" + ante_text).lower()
-    diagnosis_key = "unknown"
-    diagnosis_label = "未归类（请查看下方完整日志）"
-    for key, label, patterns in _DIAG_RULES:
-        if any(p in combined for p in patterns):
-            diagnosis_key = key
-            diagnosis_label = label
-            break
+    diagnosis_key, diagnosis_label = diagnose_from_text(
+        sqm_text + "\n" + ante_text + "\n" + (extra_text or ""),
+    )
 
     sqm_excerpt = _tail_error_lines(sqm_text) or "（无 sqm.out 或文件为空）"
     ante_excerpt = ante_text[-2500:].strip() if ante_text else "（无 antechamber 输出日志）"
+    # 若磁盘上的失败日志已被成功探测覆盖，回退到任务日志摘录
+    extra_excerpt = _tail_error_lines(extra_text or "", max_lines=25)
+    looks_success_sqm = (
+        "calculation completed" in sqm_text.lower()
+        and "odd number" not in sqm_text.lower()
+    )
+    if diagnosis_key != "unknown" and extra_excerpt:
+        if looks_success_sqm or "sqm 摘要" in (extra_text or "").lower():
+            sqm_lines = [
+                ln for ln in extra_excerpt.splitlines()
+                if any(k in ln.lower() for k in (
+                    "qmcharge", "odd number", "scf", "fatal", "error", "qmmm",
+                ))
+            ]
+            if sqm_lines:
+                sqm_excerpt = "\n".join(sqm_lines[-15:])
+        if (not ante_text) or ("returncode=0" in ante_text):
+            ante_excerpt = extra_excerpt
 
     return {
         "diagnosis_key": diagnosis_key,
