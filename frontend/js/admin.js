@@ -5,7 +5,7 @@
   var btnLoad = document.getElementById("btn-load");
   var content = document.getElementById("admin-content");
   var userStatsEl = document.getElementById("user-stats");
-  var msgEl = document.getElementById("admin-msg");
+  var msgEl = document.getElementById("admin-msg-top") || document.getElementById("admin-msg");
 
   var STORAGE_KEY = "webmd_admin_key";
   var MARKET_URL = "https://www.autodl.com/market/list";
@@ -109,25 +109,61 @@
     userStatsEl.innerHTML = html;
   }
 
-  function reject(taskId, k) {
-    var reason = prompt("驳回原因（选填，将记入备注）：", "未收到对应金额转账");
-    if (reason === null) return;
+  function apiDetail(e) {
+    // 解析 FastAPI 错误详情（字符串或校验错误数组）
+    if (!e) return "";
+    if (typeof e.detail === "string") return e.detail;
+    if (Array.isArray(e.detail) && e.detail[0] && e.detail[0].msg) {
+      return e.detail.map(function (x) { return x.msg; }).join("; ");
+    }
+    return e.detail ? String(e.detail) : "";
+  }
 
-    fetch("/api/admin/payments/" + taskId + "/reject?admin_key=" + encodeURIComponent(k) + "&reason=" + encodeURIComponent(reason), {
-      method: "POST",
-    })
+  function reject(taskId, k) {
+    // 与「核实通过」一致先用 confirm；避免仅用 prompt 时点取消被误认为按钮无响应
+    if (!confirm("确认驳回任务 " + taskId + " 的支付申请？\n用户可重新发起支付。")) {
+      return;
+    }
+    var reason = "未收到对应金额转账";
+    try {
+      var typed = window.prompt("驳回原因（可改，直接确定即可）：", reason);
+      // 点取消仍按默认原因驳回，避免「点了不通过却什么都没发生」
+      if (typed !== null && String(typed).trim()) {
+        reason = String(typed).trim();
+      }
+    } catch (e) {
+      // 个别环境禁用 prompt，忽略并使用默认原因
+    }
+
+    fetch(
+      "/api/admin/payments/" +
+        encodeURIComponent(taskId) +
+        "/reject?admin_key=" +
+        encodeURIComponent(k) +
+        "&reason=" +
+        encodeURIComponent(reason),
+      { method: "POST" }
+    )
       .then(function (r) {
         if (!r.ok) {
-          return r.json().then(function (e) { throw new Error(e.detail || "驳回失败"); });
+          return r.json().then(function (e) {
+            throw new Error(apiDetail(e) || "驳回失败");
+          });
         }
         return r.json();
       })
       .then(function () {
         showMsg("任务 " + taskId + " 已驳回，用户可重新支付", true);
+        if (msgEl && msgEl.scrollIntoView) {
+          msgEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
         loadPending();
       })
       .catch(function (err) {
         showMsg(err.message || "驳回失败");
+        if (msgEl && msgEl.scrollIntoView) {
+          msgEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
       });
   }
 

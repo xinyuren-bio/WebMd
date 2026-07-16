@@ -4,7 +4,17 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Depends
+from fastapi import (
+    APIRouter,
+    UploadFile,
+    File,
+    Form,
+    HTTPException,
+    BackgroundTasks,
+    Request,
+    Depends,
+    Query,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -516,7 +526,11 @@ class AutodlSshBody(BaseModel):
 
 
 @router.post("/admin/payments/{task_id}/reject")
-async def reject_task_payment(task_id: str, admin_key: str = "", reason: str = ""):
+async def reject_task_payment(
+    task_id: str,
+    admin_key: str = Query(default=""),
+    reason: str = Query(default=""),
+):
     """管理员：驳回付款申请，用户可重新支付。"""
     if not verify_admin_key(admin_key):
         raise HTTPException(status_code=403, detail="管理员密钥无效")
@@ -529,14 +543,15 @@ async def reject_task_payment(task_id: str, admin_key: str = "", reason: str = "
 
     note = (reason or "").strip()[:80]
     if note:
-        task.payment_note = f"{task.payment_note} [驳回:{note}]".strip()[:120]
+        prev = (task.payment_note or "").strip()
+        task.payment_note = f"{prev} [驳回:{note}]".strip()[:120]
 
     task.paid = False
     task.paid_at = None
     task.payment_status = "unpaid"
     task.payment_claimed_at = None
     task.save()
-    logger.info("任务 %s 支付核实被驳回", task_id)
+    logger.info("任务 %s 支付核实被驳回：%s", task_id, note or "(无原因)")
     return {"ok": True, "task_id": task_id, "payment_status": "unpaid"}
 
 
