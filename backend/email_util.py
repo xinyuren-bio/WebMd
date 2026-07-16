@@ -293,7 +293,7 @@ def send_user_md_completed_notify(
         f"您好，\n\n"
         f"任务 {task_id} 的分子动力学模拟已完成。\n\n"
         f"附件说明：\n"
-        f"1. {task_id}_simulation.zip — 含 ndx、top、tpr、pdb（有轨迹时含 xtc）\n"
+        f"1. {task_id}_simulation.zip — 含 ndx、top、tpr；pdb/xtc 为蛋白+配体（无溶剂）\n"
         f"2. {task_id}_analysis.zip — 含 analysis_csv/（数据表）与 analysis_plots/（图片）\n"
     )
     if attach_note:

@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==================================================
-# 功能说明：打包模拟数据包与分析结果包（xtc 可选，适配短测试）
+# 功能说明：打包模拟数据包与分析结果包；交付 pdb/xtc 仅含蛋白+配体
 # 使用方法：在任务目录执行 bash pack_deliverables.sh
-# 依赖环境：zip
-# 生成时间：2026-07-13
+# 依赖环境：zip；可选 GROMACS（用于从全体系轨迹抽取 Complex）
+# 生成时间：2026-07-16
 # ==================================================
 
 set -uo pipefail
@@ -11,24 +11,43 @@ set -uo pipefail
 WD="$(cd "$(dirname "$0")" && pwd)"
 cd "$WD"
 
+export PATH="/usr/local/gromacs/bin:${PATH}"
+GMX="${GMX:-gmx}"
+
 SIM_ZIP="simulation_deliverables.zip"
 ANAL_ZIP="analysis_deliverables.zip"
 README="交付说明.txt"
+STAGE=".deliver_stage"
+
+# 从 ndx 按组名解析组号
+_group_id() {
+  local name="$1"
+  local ndx="${2:-to.ndx}"
+  [ -f "$ndx" ] || return 0
+  awk -v name="$name" '
+    BEGIN { i = 0 }
+    /^\[/ {
+      g = $0
+      gsub(/^\[[[:space:]]*/, "", g)
+      gsub(/[[:space:]]*\]$/, "", g)
+      if (g == name) { print i; exit }
+      i++
+    }
+  ' "$ndx"
+}
 
 echo "=== 打包模拟数据压缩包 ==="
 
 # 补全 ndx / pdb
 if [ ! -f to.ndx ] && [ -f md.gro ]; then
-  export PATH="/usr/local/gromacs/bin:${PATH}"
-  echo q | gmx make_ndx -f md.gro -o to.ndx 2>/dev/null || true
+  echo q | $GMX make_ndx -f md.gro -o to.ndx 2>/dev/null || true
 fi
 if [ ! -f complex.pdb ] && [ -f md.gro ]; then
-  export PATH="/usr/local/gromacs/bin:${PATH}"
-  gmx editconf -f md.gro -o complex.pdb 2>/dev/null || true
+  $GMX editconf -f md.gro -o complex.pdb 2>/dev/null || true
 fi
 
 MISS=""
-for f in to.ndx system.top md.tpr complex.pdb; do
+for f in to.ndx system.top md.tpr; do
   if [ ! -f "$f" ]; then
     MISS="$MISS $f"
   fi
@@ -38,26 +57,141 @@ if [ -n "$MISS" ]; then
   exit 1
 fi
 
+# ---------- 交付用：仅蛋白 + 配体（无水/离子）----------
+# 分析阶段仍使用全体系 fit.xtc；此处另导出 Complex 供用户下载
+CPX_ID="$(_group_id Complex)"
+PROT_ID="$(_group_id Protein)"
+LIG_ID="$(_group_id Ligand)"
+REC_ID="$(_group_id Receptor)"
+SOLUTE_ID=""
+SOLUTE_NAME=""
+if [ -n "${CPX_ID:-}" ]; then
+  SOLUTE_ID="$CPX_ID"
+  SOLUTE_NAME="Complex"
+elif [ -n "${REC_ID:-}" ] && [ -n "${LIG_ID:-}" ]; then
+  # 有 Receptor+Ligand 但无 Complex 时临时合并（少见）
+  SOLUTE_ID=""
+  SOLUTE_NAME="Receptor+Ligand"
+elif [ -n "${PROT_ID:-}" ] && [ -n "${LIG_ID:-}" ]; then
+  SOLUTE_ID=""
+  SOLUTE_NAME="Protein+Ligand"
+elif [ -n "${PROT_ID:-}" ]; then
+  SOLUTE_ID="$PROT_ID"
+  SOLUTE_NAME="Protein"
+fi
+
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
+cp -f to.ndx system.top md.tpr "$STAGE/"
+
+DELIV_PDB="$STAGE/complex.pdb"
+DELIV_XTC="$STAGE/fit.xtc"
+HAVE_XTC=0
+
+_extract_solute() {
+  local src_xtc="$1"
+  local out_xtc="$2"
+  local out_pdb="$3"
+  local gid="$4"
+  echo "交付轨迹/结构：抽取组 ${SOLUTE_NAME} (id=${gid}) ← ${src_xtc}"
+  echo "$gid" | $GMX trjconv -f "$src_xtc" -s md.tpr -n to.ndx -o "$out_xtc" 2>/dev/null || return 1
+  echo "$gid" | $GMX trjconv -f "$src_xtc" -s md.tpr -n to.ndx -dump 0 -o "$out_pdb" 2>/dev/null || return 1
+  return 0
+}
+
+_extract_by_merge() {
+  # 无 Complex 组时：用 Protein|Ligand 或 Receptor|Ligand 写临时 ndx 再抽取
+  local src_xtc="$1"
+  local a="$2"
+  local b="$3"
+  local tmpn="to_deliver_tmp.ndx"
+  cp -f to.ndx "$tmpn"
+  printf "%s | %s\nq\n" "$a" "$b" | $GMX make_ndx -f md.tpr -n "$tmpn" -o "$tmpn" 2>/dev/null || return 1
+  local last
+  last=$(awk '/^\[/{n++} END{if(n>0) print n-1; else print 0}' "$tmpn")
+  echo "$last" | $GMX trjconv -f "$src_xtc" -s md.tpr -n "$tmpn" -o "$DELIV_XTC" 2>/dev/null || {
+    rm -f "$tmpn"
+    return 1
+  }
+  echo "$last" | $GMX trjconv -f "$src_xtc" -s md.tpr -n "$tmpn" -dump 0 -o "$DELIV_PDB" 2>/dev/null || {
+    rm -f "$tmpn"
+    return 1
+  }
+  rm -f "$tmpn"
+  return 0
+}
+
+SRC_XTC=""
+if [ -f fit.xtc ] && [ -s fit.xtc ]; then
+  SRC_XTC="fit.xtc"
+elif [ -f md.xtc ] && [ -s md.xtc ]; then
+  SRC_XTC="md.xtc"
+fi
+
+EXTRACT_OK=0
+if [ -n "$SRC_XTC" ] && [ -n "${SOLUTE_ID:-}" ]; then
+  if _extract_solute "$SRC_XTC" "$DELIV_XTC" "$DELIV_PDB" "$SOLUTE_ID"; then
+    EXTRACT_OK=1
+    HAVE_XTC=1
+  fi
+elif [ -n "$SRC_XTC" ] && [ -n "${LIG_ID:-}" ]; then
+  A="${REC_ID:-$PROT_ID}"
+  if [ -n "${A:-}" ] && _extract_by_merge "$SRC_XTC" "$A" "$LIG_ID"; then
+    EXTRACT_OK=1
+    HAVE_XTC=1
+    SOLUTE_NAME="Protein+Ligand"
+  fi
+fi
+
+if [ "$EXTRACT_OK" -eq 0 ]; then
+  echo "警告：无法抽取蛋白+配体轨迹，回退为现有 complex.pdb / 全体系轨迹（可能含水）"
+  if [ -f complex.pdb ]; then
+    cp -f complex.pdb "$DELIV_PDB"
+  elif [ -f md.gro ]; then
+    $GMX editconf -f md.gro -o "$DELIV_PDB" 2>/dev/null || true
+  fi
+  if [ -n "$SRC_XTC" ]; then
+    cp -f "$SRC_XTC" "$DELIV_XTC"
+    HAVE_XTC=1
+  fi
+fi
+
+if [ ! -f "$DELIV_PDB" ]; then
+  echo "错误：未能生成交付用 complex.pdb"
+  exit 1
+fi
+
 {
   echo "WebMD 模拟交付包"
   echo "任务目录: $(basename "$WD")"
-  if [ -f fit.xtc ] && [ -s fit.xtc ]; then
-    echo "轨迹: fit.xtc（已叠合）"
-  elif [ -f md.xtc ] && [ -s md.xtc ]; then
-    echo "轨迹: md.xtc（原始）"
+  echo ""
+  echo "【结构与轨迹】"
+  if [ "$EXTRACT_OK" -eq 1 ]; then
+    echo "complex.pdb / fit.xtc：仅含蛋白 + 配体/肽（组 ${SOLUTE_NAME}），不含溶剂与离子。"
   else
-    echo "轨迹: 无（短测试或未输出 xtc，仅含拓扑/结构/ tpr）"
+    echo "complex.pdb / fit.xtc：未能自动去溶剂，可能仍含全体系原子，请自行用 to.ndx 筛选。"
   fi
-} > "$README"
+  if [ "$HAVE_XTC" -eq 1 ]; then
+    echo "轨迹: fit.xtc（相对蛋白骨架叠合后的溶质轨迹）"
+  else
+    echo "轨迹: 无（短测试或未输出 xtc）"
+  fi
+  echo ""
+  echo "【拓扑】"
+  echo "system.top / md.tpr / to.ndx：仍为全体系（含水/离子），便于在 GROMACS 中复现或再分析。"
+} > "$STAGE/$README"
 
 rm -f "$SIM_ZIP"
-ZIP_LIST=(to.ndx system.top md.tpr complex.pdb "$README")
-if [ -f fit.xtc ] && [ -s fit.xtc ]; then
-  ZIP_LIST+=(fit.xtc)
-elif [ -f md.xtc ] && [ -s md.xtc ]; then
-  ZIP_LIST+=(md.xtc)
-fi
-zip -j -q "$SIM_ZIP" "${ZIP_LIST[@]}"
+(
+  cd "$STAGE"
+  ZIP_LIST=(to.ndx system.top md.tpr complex.pdb "$README")
+  if [ "$HAVE_XTC" -eq 1 ] && [ -s fit.xtc ]; then
+    ZIP_LIST+=(fit.xtc)
+  fi
+  zip -j -q "../$SIM_ZIP" "${ZIP_LIST[@]}"
+)
+rm -rf "$STAGE"
+
 if [ ! -s "$SIM_ZIP" ]; then
   echo "错误：$SIM_ZIP 为空"
   exit 1

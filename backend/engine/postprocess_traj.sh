@@ -12,7 +12,8 @@
 #   3) trjconv -pbc nojump   （输出 System）
 #   4) trjconv -fit rot+trans（先 Backbone 拟合，再输出 System；
 #      使蛋白+配体随骨架刚体变换，且与 md.tpr/to.ndx 原子数一致）
-#   5) dump 0 → complex.pdb （System）
+#   5) dump 0 → complex.pdb （优先 Complex=蛋白+配体；无则 System）
+#   注：fit.xtc 仍为 System，供分析与 md.tpr 原子数一致；交付包再抽溶质
 
 set -uo pipefail
 
@@ -224,10 +225,18 @@ if [ ! -f fit.xtc ] || [ ! -s fit.xtc ]; then
   exit 1
 fi
 
-echo "=== 导出 complex.pdb (dump 0, System) ==="
+echo "=== 导出 complex.pdb (dump 0, 优先蛋白+配体) ==="
 rm -f complex.pdb
-echo "$SYS_ID" | $GMX trjconv -f md.xtc -s md.tpr -dump 0 -o complex.pdb -n to.ndx || {
-  echo 0 | $GMX trjconv -f md.xtc -s md.tpr -dump 0 -o complex.pdb 2>/dev/null || \
+PDB_GID="${CPX_ID:-}"
+if [ -z "$PDB_GID" ] && [ -n "${LIG_ID:-}" ]; then
+  # 无 Complex 时回退 System（打包阶段会再尝试合并抽取）
+  PDB_GID="$SYS_ID"
+elif [ -z "$PDB_GID" ]; then
+  PDB_GID="$SYS_ID"
+fi
+echo "$PDB_GID" | $GMX trjconv -f fit.xtc -s md.tpr -dump 0 -o complex.pdb -n to.ndx || {
+  echo "$SYS_ID" | $GMX trjconv -f md.xtc -s md.tpr -dump 0 -o complex.pdb -n to.ndx 2>/dev/null || \
+    echo 0 | $GMX trjconv -f md.xtc -s md.tpr -dump 0 -o complex.pdb 2>/dev/null || \
     $GMX editconf -f "$GRO" -o complex.pdb 2>/dev/null || true
 }
 
