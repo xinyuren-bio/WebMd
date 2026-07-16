@@ -2,7 +2,7 @@
 # 功能说明：tleap 构建 Amber 溶剂化体系，acpype 转换为 GROMACS 拓扑
 # 使用方法：由 pipeline 调用 build_full_system / convert_to_gromacs
 # 依赖环境：AmberTools (tleap) + acpype (pip install acpype)
-# 生成时间：2026-07-16
+# 生成时间：2026-07-16（断链 TER / tleap 诊断）
 # ==================================================
 
 import logging
@@ -13,6 +13,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .env_check import repair_ambertools, resolve_tool_cmd, source_amber_env, tool_env
+from .pdb_sanitize import sanitize_protein_lines
 
 logger = logging.getLogger(__name__)
 
@@ -332,12 +333,38 @@ def _clean_pdb_for_tleap(pdb_path: str, out_path: str) -> str:
                     line = line[:21] + "A" + line[22:]
             cleaned_lines.append(line)
 
-    # 修正 PDBFixer 与 Amber 末端模板不一致的氢名 / OXT
+    # 空间断链插 TER + 按片段修末端，再修正 N 端氢名 / 异常 OXT
+    cleaned_lines = sanitize_protein_lines(cleaned_lines)
     cleaned_lines = _fix_terminal_atoms_for_tleap(cleaned_lines)
 
     with open(out_path, "w", encoding="utf-8") as f:
         f.writelines(cleaned_lines)
     return out_path
+
+
+def _tleap_error_hint(stdout: str, stderr: str) -> str:
+    """从 tleap 输出提取 FATAL/长键警告，生成简短中文提示。"""
+    text = f"{stdout}\n{stderr}"
+    fatals = [ln.strip() for ln in text.splitlines() if "FATAL" in ln.upper()]
+    long_bonds = [
+        ln.strip()
+        for ln in text.splitlines()
+        if "bond of" in ln and "angstroms" in ln
+    ]
+    hints: list[str] = []
+    if any("does not have a type" in f for f in fatals):
+        hints.append(
+            "原子类型失败：常见原因是 (1) 蛋白空间断链却未分段，断点处出现 H1/H2/H3；"
+            "(2) 肽链原子名非 Amber 标准（如碳全为 C、硫为 S 而非 SD）。"
+        )
+    if long_bonds:
+        hints.append(
+            f"检测到异常长键 {len(long_bonds)} 处（可能断链或坐标损坏），"
+            "系统已尝试插入 TER；若仍失败请检查结构。"
+        )
+    if fatals:
+        hints.append("关键错误: " + " | ".join(fatals[:5]))
+    return "\n".join(hints)
 
 
 def _run_tleap(work: Path, tleap_in: Path, prmtop: Path, inpcrd: Path) -> None:
@@ -353,8 +380,11 @@ def _run_tleap(work: Path, tleap_in: Path, prmtop: Path, inpcrd: Path) -> None:
     if r.returncode != 0 or not prmtop.exists() or not inpcrd.exists():
         logger.error("tleap stdout:\n%s", r.stdout[-3000:])
         logger.error("tleap stderr:\n%s", r.stderr[-3000:])
+        hint = _tleap_error_hint(r.stdout or "", r.stderr or "")
         raise RuntimeError(
-            f"tleap 失败。\n\nSTDOUT:\n{r.stdout[-3000:]}\n\nSTDERR:\n{r.stderr[-3000:]}"
+            "tleap 失败。\n"
+            + (f"\n【诊断】\n{hint}\n" if hint else "")
+            + f"\nSTDOUT:\n{r.stdout[-3000:]}\n\nSTDERR:\n{r.stderr[-3000:]}"
         )
 
 

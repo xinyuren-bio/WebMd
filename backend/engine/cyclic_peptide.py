@@ -2,18 +2,35 @@
 # 功能说明：标准氨基酸环肽/线形肽的 PDB 校验、清理与 tleap 准备
 # 使用方法：pipeline 调用 prepare_cyclic_peptide / prepare_linear_peptide
 # 依赖环境：Python 标准库；组氨酸命名复用 protein._fix_histidine_protonation
-# 生成时间：2026-07-16
+# 生成时间：2026-07-16（UFF 原子名修复 / PDB 列格式）
 # ==================================================
 
 from __future__ import annotations
 
 import json
 import logging
+import shutil
 from pathlib import Path
 
+from .pdb_sanitize import assert_peptide_amber_names, rename_std_aa_atoms_in_pdb
 from .protein import _fix_histidine_protonation
 
 logger = logging.getLogger(__name__)
+
+
+def _prepare_source_with_amber_names(src: Path, work: Path) -> Path:
+    """复制源 PDB 并尝试将标准氨基酸原子名修复为 Amber 风格。"""
+    work.mkdir(parents=True, exist_ok=True)
+    tmp = work / f"_peptide_rename_{src.name}"
+    shutil.copy2(src, tmp)
+    info = rename_std_aa_atoms_in_pdb(tmp)
+    if info.get("residues_renamed"):
+        logger.info(
+            "肽链原子名已自动修复 %d 个残基（来源: %s）",
+            info["residues_renamed"],
+            src.name,
+        )
+    return tmp
 
 # 标准氨基酸（含 Amber 组氨酸命名）；第一期不支持杂原子侧链修饰
 _STD_AA = frozenset({
@@ -85,6 +102,8 @@ def prepare_cyclic_peptide(pdb_path: str, work_dir: str) -> dict:
     if not src.is_file():
         raise FileNotFoundError(f"环肽 PDB 不存在: {pdb_path}")
 
+    # UFF/对接 PDB 常破坏原子名，先按 CONECT/几何重命名
+    src = _prepare_source_with_amber_names(src, work)
     residues = _parse_residues(src)
     if len(residues) < 3:
         raise ValueError("环肽至少需要 3 个氨基酸残基")
@@ -114,7 +133,8 @@ def prepare_cyclic_peptide(pdb_path: str, work_dir: str) -> dict:
         seq_names.append(rn if rn != "HIS" else "HIE")
         for ln in cleaned:
             # 强制链 C、新残基号
-            ln = ln[:17] + f"{rn:<3s}" + "C" + f"{new_num:4d}" + ln[26:]
+            # 列 17–19 残基名，20 插入码空格，21 链号，22–25 残基号
+            ln = ln[:17] + f"{rn:<3s} C{new_num:4d}" + ln[26:]
             if ln.startswith("HETATM"):
                 ln = "ATOM  " + ln[6:]
             out_lines.append(ln.rstrip("\n") + "\n")
@@ -125,6 +145,7 @@ def prepare_cyclic_peptide(pdb_path: str, work_dir: str) -> dict:
 
     # 组氨酸 HID/HIE/HIP（就地改文件）
     _fix_histidine_protonation(str(clean_path))
+    assert_peptide_amber_names(clean_path)
 
     # 按清理后文件重读序列（HIS 可能已变为 HID/HIE/HIP）
     residues2 = _parse_residues(clean_path)
@@ -169,6 +190,8 @@ def prepare_linear_peptide(pdb_path: str, work_dir: str) -> dict:
     if not src.is_file():
         raise FileNotFoundError(f"线形肽 PDB 不存在: {pdb_path}")
 
+    # UFF/对接 PDB 常破坏原子名，先按 CONECT/几何重命名
+    src = _prepare_source_with_amber_names(src, work)
     residues = _parse_residues(src)
     if len(residues) < 2:
         raise ValueError("线形肽至少需要 2 个氨基酸残基")
@@ -188,8 +211,8 @@ def prepare_linear_peptide(pdb_path: str, work_dir: str) -> dict:
         new_num = resid_start + i
         rn = res["resname"]
         for ln in res["lines"]:
-            # 保留末端原子；仅统一链号与残基号
-            ln = ln[:17] + f"{rn:<3s}" + "C" + f"{new_num:4d}" + ln[26:]
+            # 列 17–19 残基名，20 插入码空格，21 链号，22–25 残基号
+            ln = ln[:17] + f"{rn:<3s} C{new_num:4d}" + ln[26:]
             if ln.startswith("HETATM"):
                 ln = "ATOM  " + ln[6:]
             out_lines.append(ln.rstrip("\n") + "\n")
@@ -199,6 +222,7 @@ def prepare_linear_peptide(pdb_path: str, work_dir: str) -> dict:
     clean_path.write_text("".join(out_lines), encoding="utf-8")
 
     _fix_histidine_protonation(str(clean_path))
+    assert_peptide_amber_names(clean_path)
 
     residues2 = _parse_residues(clean_path)
     seq_names = [r["resname"] for r in residues2]
