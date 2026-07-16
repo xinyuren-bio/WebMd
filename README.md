@@ -1,135 +1,141 @@
-# GROMACS 分子动力学模拟体系搭建工具
+<p align="center">
+  <img src="frontend/assets/images/logo.png" alt="WebMD" width="72" height="72">
+</p>
 
-Web 界面驱动的蛋白-配体 MD 前处理流水线，自动生成 GROMACS 可运行的模拟文件包。
+<h1 align="center">WebMD</h1>
 
-## 功能
+<p align="center">
+  <b>蛋白–配体分子动力学 · 在线体系搭建与结果交付</b>
+</p>
 
-1. **蛋白修复** — PDBFixer 补残基/原子/氢，自动修正组氨酸质子化 (HID/HIE/HIP)
-2. **配体参数化** — antechamber GAFF2 + AM1-BCC 电荷（自动检测净电荷）
-3. **体系构建** — tleap 合并蛋白-配体、TIP3P 溶剂化、按浓度加盐
-4. **格式转换** — acpype 将 Amber 拓扑转为 GROMACS gro/top
-5. **模拟输入** — 生成 em/nvt/npt/md 四套 mdp 文件 + `run_md.sh` 一键脚本
+<p align="center">
+  上传结构 → 自动力场与溶剂化 → 下载 GROMACS 体系包<br>
+  支持小分子 · 环肽 · 线形肽
+</p>
 
-## 依赖环境
+<p align="center">
+  <a href="http://8.219.168.5:8000/"><img src="https://img.shields.io/badge/进入网站-WebMD-0d9488?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Enter WebMD"></a>
+  &nbsp;
+  <img src="https://img.shields.io/badge/Engine-GROMACS-6366f1?style=for-the-badge" alt="GROMACS">
+  &nbsp;
+  <img src="https://img.shields.io/badge/Force%20Field-ff14SB%20%2B%20GAFF2-0891b2?style=for-the-badge" alt="Force Field">
+</p>
 
-### Python 包
+<p align="center">
+  <a href="http://8.219.168.5:8000/"><strong>👉 http://8.219.168.5:8000/</strong></a>
+</p>
 
-```bash
-cd backend
-pip install -r requirements.txt
-```
+---
 
-> `pdbfixer` 会间接依赖 OpenMM，但**仅用于蛋白结构修复**，模拟引擎为 GROMACS。
+## 一键进入
 
-### 系统工具（必需）
+| 步骤 | 操作 |
+|:----:|------|
+| 1 | 打开 **[WebMD 网站](http://8.219.168.5:8000/)** |
+| 2 | 右上角 **注册 / 登录**（提交任务与下载需要账号） |
+| 3 | 点击 **「体系准备」** 或首页 **「开始体系准备」** |
+| 4 | 按下方流程上传结构并提交 |
 
-| 工具 | 用途 | 安装方式 |
-|------|------|----------|
-| **AmberTools** | antechamber, parmchk2, tleap | `conda install -c conda-forge ambertools` |
-| **acpype** | Amber → GROMACS 转换 | `pip install acpype`（已在 requirements 中） |
-| **GROMACS** | 运行模拟 | `conda install -c conda-forge gromacs` |
+> 网页端暂不提供轨迹在线分析。模拟完成后，分析报告会发送到注册邮箱。
 
-推荐 Conda 环境：
-
-```bash
-conda create -n md_web -c conda-forge ambertools gromacs python=3.11
-conda activate md_web
-pip install -r backend/requirements.txt
-```
-
-## 启动
-
-```bash
-conda activate md_web
-cd backend
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-浏览器访问 http://localhost:8000
-
-> **重要：** 必须在 `md_web` 环境中启动服务，否则找不到 antechamber/tleap/gmx 等命令：
-> ```bash
-> conda activate md_web
-> cd backend && uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-> ```
-
-## 故障排查
-
-### antechamber: wrapped_progs/antechamber: No such file or directory
-
-AmberTools 安装不完整，常见原因是 **acpype 安装后覆盖了 `wrapped_progs/`**。
-
-**方法一（推荐）：** 流水线已内置自动修复，重启服务后重新提交任务即可。
-
-**方法二（手动修复）：**
-
-```bash
-conda activate md_web
-conda install -c conda-forge ambertools --force-reinstall -y
-```
-
-> 安装顺序建议：先装 `ambertools`，再装 `gromacs` 和 `acpype`，避免二进制被覆盖。
-
-验证：
-
-```bash
-ls $CONDA_PREFIX/bin/wrapped_progs/antechamber
-antechamber -h
-gmx --version
-acpype -h
-```
+---
 
 ## 使用流程
 
-1. 上传蛋白 PDB 文件和小分子 MOL2 文件
-2. 设置模拟参数（温度、压强、时长、离子浓度等）
-3. 点击「开始准备模拟体系」，等待流水线完成
-4. 下载 `tar.gz` 结果包
-
-## 结果包内容
-
-```
-system.gro          # GROMACS 坐标
-system.top          # GROMACS 拓扑
-system.prmtop       # Amber 拓扑（参考）
-system.inpcrd       # Amber 坐标（参考）
-mdp/
-  em.mdp            # 能量最小化
-  nvt.mdp           # NVT 平衡
-  npt.mdp           # NPT 平衡
-  md.mdp            # 生产 MD
-run_md.sh           # 一键运行脚本
+```text
+登录  →  选择配体类型  →  上传结构  →  3D 预览核对
+     →  设置参数  →  提交构建  →  下载结果包 / 云端 MD
 ```
 
-## 运行模拟
+### 1. 选择配体类型
 
-解压后在目录中执行：
+在「上传文件」处选择：
+
+| 类型 | 上传文件 | 力场 |
+|------|----------|------|
+| **小分子** | 蛋白 PDB + 配体 MOL2（1–3 个） | 蛋白 ff14SB · 配体 GAFF2 / AM1-BCC |
+| **环肽** | 蛋白 PDB + **仅环肽** PDB | 双方 ff14SB · 自动头尾 N–C 成环 |
+| **线形肽** | 蛋白 PDB + **仅线形肽** PDB | 双方 ff14SB · 保留 N/C 末端 |
+
+### 2. 准备你的结构文件
+
+**小分子**
+- 蛋白与配体请在 PyMOL / ChimeraX 中**预先摆好相对位置**再分别导出
+- 配体需为 **MOL2**（若是 SDF：`obabel ligand.sdf -O ligand.mol2`）
+- 对接复合物可先按站内「使用教程」拆成蛋白 PDB + 配体文件
+
+**环肽 / 线形肽**
+- 第二个文件必须是**肽本身**，不要上传整条蛋白或复合物
+- 目前仅支持**标准氨基酸**；肽 PDB 建议使用规范 ATOM 原子名
+- 环肽：请保证首尾几何已适合成键；线形肽：保留末端即可，无需手动成环
+
+### 3. 3D 预览
+
+两个文件都选好后，页面会自动显示复合物预览：
+- 蛋白：**Cartoon**
+- 配体 / 肽：**球棍**（按元素着色）
+
+可用工具栏切换显示样式，确认口袋与姿态无误后再提交。
+
+### 4. 模拟参数
+
+常用默认已可用，按需调整例如：
+- 温度、压强、溶剂盒子边距
+- 离子浓度与盐种类（NaCl / KCl）
+- 模拟时长（10 / 100 / 200 ns，用于后续云端 MD）
+
+### 5. 提交与下载
+
+1. 点击开始构建，等待流水线完成（蛋白修复 → 参数化 → 溶剂化 → GROMACS 转换）
+2. 小分子若自动净电荷失败，页面会弹出**净电荷确认**（不会静默改电荷）
+3. 完成后下载 `tar.gz` 结果包；也可按站内指引进行付费云端 MD
+4. 云端模拟结束后，分析报告发至邮箱
+
+---
+
+## 你将获得什么
+
+解压结果包后，典型内容包括：
+
+```text
+system.gro / system.top     GROMACS 坐标与拓扑
+system.prmtop / inpcrd      Amber 参考拓扑
+mdp/                        em · nvt · npt · md
+run_md.sh                   一键运行脚本
+FORCEFIELD.txt              力场与净电荷说明（若有配体）
+```
+
+本地有 GROMACS 时可自行运行：
 
 ```bash
 tar xzf gromacs_md_*.tar.gz -C md_run && cd md_run
 bash run_md.sh
 ```
 
-可通过环境变量指定 GROMACS 可执行文件：
+---
 
-```bash
-GMX=/usr/local/gromacs/bin/gmx bash run_md.sh
-```
+## 科学设置一览
 
-## API
+| 项目 | 设置 |
+|------|------|
+| 蛋白 / 肽 | Amber **ff14SB** |
+| 小分子 | **GAFF2** + **AM1-BCC** |
+| 溶剂 | TIP3P · 可加盐 |
+| 引擎 | GROMACS（PME · V-rescale · Parrinello–Rahman） |
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/api/tasks` | POST | 创建任务（multipart 上传） |
-| `/api/tasks/{id}` | GET | 查询任务状态 |
-| `/api/tasks/{id}/download` | GET | 下载结果包 |
-| `/api/tasks/{id}/logs` | GET | 获取运行日志 |
+---
 
-任务元数据持久化在 `backend/tasks/{id}/task_meta.json`，服务重启后可恢复历史任务状态。
+## 小贴士
 
-## 力场
+- 提交前请先**登录**
+- 肽类文件原子数应远小于蛋白；若预览满屏棍状，多半是把复合物当成肽上传了
+- 站内 **「使用教程」** 含拆分对接复合物等说明与视频
+- 任务状态页可收藏，便于回查进度
 
-- 蛋白：Amber ff14SB
-- 配体：GAFF2
-- 水模型：TIP3P
-- 模拟引擎：GROMACS（PME, V-rescale 温控, Parrinello-Rahman 压控）
+---
+
+<p align="center">
+  <a href="http://8.219.168.5:8000/"><strong>打开 WebMD →</strong></a>
+  &nbsp;·&nbsp;
+  © 2026 WebMD
+</p>
