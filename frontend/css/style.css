@@ -1692,6 +1692,59 @@ body.workspace-guide #app {
   margin-top: 2px;
 }
 
+/* 配体阅读器 */
+.ligand-reader-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.ligand-reader-meta {
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.ligand-reader-pick-hint {
+  margin: 0 0 8px;
+}
+
+.ligand-reader-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.ligand-reader-tab {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.ligand-reader-tab.active {
+  border-color: #0f766e;
+  background: #ccfbf1;
+  color: #0f766e;
+  font-weight: 600;
+}
+
+.ligand-reader-viewport {
+  min-height: 320px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 8px;
+  background: #0b1220;
+}
+
+#ligand-reader-status.confirmed {
+  color: #059669;
+  font-weight: 600;
+}
+
 /* ---- Buttons ---- */
 .action-row {
   display: flex;

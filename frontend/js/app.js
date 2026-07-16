@@ -531,6 +531,17 @@
       addH.disabled = pep;
       if (pep) addH.checked = false;
     }
+    // 小分子模式显示配体阅读器；肽模式隐藏
+    var lr = document.getElementById("section-ligand-reader");
+    if (lr) {
+      if (mol2) {
+        lr.classList.remove("hidden");
+      } else {
+        lr.classList.add("hidden");
+        if (window.LigandReader) window.LigandReader.reset();
+      }
+    }
+    if (window.WebMD) window.WebMD.confirmedLigandReader = null;
     if (complexMode && pdbInput && pdbInput.files[0]) {
       refreshComplexChains();
     } else {
@@ -550,7 +561,13 @@
   window.WebMD.onLigandChange = function () {
     updateSubmitButton();
     updatePreview();
+    if (window.WebMD) window.WebMD.confirmedLigandReader = null;
   };
+  window.WebMD.isMol2ComplexMode = function () {
+    return isMol2Mode() && isComplexMode();
+  };
+  window.WebMD.getSelectedProteinChains = getSelectedProteinChains;
+  window.WebMD.getSelectedLigandResidues = getSelectedLigandResidues;
 
   function getMol2Files() {
     if (window.WebMD && window.WebMD.getMol2Files) {
@@ -723,11 +740,21 @@
         return;
       }
     } else if (isMol2Mode() && isComplexMode()) {
-      if (
-        !pdbInput.files[0] ||
-        !getSelectedProteinChains().length ||
-        !getSelectedLigandResidues().length
-      ) {
+      var useReader =
+        window.WebMD &&
+        window.WebMD.confirmedLigandReader &&
+        window.WebMD.confirmedLigandReader.confirmed;
+      if (!useReader) {
+        if (
+          !pdbInput.files[0] ||
+          !getSelectedProteinChains().length ||
+          !getSelectedLigandResidues().length
+        ) {
+          return;
+        }
+        showError("请先在「配体阅读器」中准备并确认补氢结构，再提交任务");
+        var lrSec = document.getElementById("section-ligand-reader");
+        if (lrSec) lrSec.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
     } else if (!pdbInput.files[0] || !getMol2Files().length) {
@@ -744,7 +771,18 @@
       params.protein_chains = getSelectedProteinChains().join(",");
       params.peptide_chain = getSelectedPeptideChain();
     }
-    if (isMol2Mode() && isComplexMode()) {
+
+    // 已确认的配体阅读器结果：按「分开上传」提交，避免服务端再次拆分/补氢
+    var reader =
+      window.WebMD && window.WebMD.confirmedLigandReader && window.WebMD.confirmedLigandReader.confirmed
+        ? window.WebMD.confirmedLigandReader
+        : null;
+    if (reader && isMol2Mode()) {
+      params.peptide_upload_mode = "separate";
+      params.protein_chains = "";
+      params.ligand_residues = "";
+      params.ligand_add_hydrogens = "0";
+    } else if (isMol2Mode() && isComplexMode()) {
       params.protein_chains = getSelectedProteinChains().join(",");
       params.ligand_residues = getSelectedLigandResidues().join(",");
     }
@@ -757,17 +795,27 @@
     resetPipeline();
 
     var formData = new FormData();
-    formData.append("pdb_file", pdbInput.files[0]);
-    if (isPeptideMode()) {
-      if (getUploadMode() === "separate") {
-        // 后端字段名沿用 cyclic_peptide_file，线形/环肽共用上传槽
-        formData.append("cyclic_peptide_file", peptideInput.files[0]);
-      }
-    } else if (!isComplexMode()) {
-      if (window.WebMD && window.WebMD.appendMol2ToFormData) {
-        window.WebMD.appendMol2ToFormData(formData);
-      } else {
-        formData.append("mol2_file", mol2Input.files[0]);
+    if (reader && isMol2Mode()) {
+      formData.append(
+        "pdb_file",
+        reader.proteinFile || pdbInput.files[0]
+      );
+      (reader.mol2Files || []).forEach(function (f, i) {
+        var key = i === 0 ? "mol2_file" : "mol2_file_" + (i + 1);
+        formData.append(key, f);
+      });
+    } else {
+      formData.append("pdb_file", pdbInput.files[0]);
+      if (isPeptideMode()) {
+        if (getUploadMode() === "separate") {
+          formData.append("cyclic_peptide_file", peptideInput.files[0]);
+        }
+      } else if (!isComplexMode()) {
+        if (window.WebMD && window.WebMD.appendMol2ToFormData) {
+          window.WebMD.appendMol2ToFormData(formData);
+        } else {
+          formData.append("mol2_file", mol2Input.files[0]);
+        }
       }
     }
     Object.keys(params).forEach(function (key) {

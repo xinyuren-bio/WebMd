@@ -1,5 +1,6 @@
 import json
 import logging
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -204,6 +205,123 @@ def _payment_payload(task: Task) -> dict:
         "qr_url": qr_url,
         "wechat_qr_url": wechat_qr_url,
     }
+
+
+@router.post("/ligand/prepare")
+async def prepare_ligand_reader(
+    user: dict = Depends(get_current_user),
+    mol2_file: Optional[UploadFile] = File(None),
+    mol2_file_2: Optional[UploadFile] = File(None),
+    mol2_file_3: Optional[UploadFile] = File(None),
+    pdb_file: Optional[UploadFile] = File(None),
+    protein_chains: str = Form(default=""),
+    ligand_residues: str = Form(default=""),
+    add_hydrogens: str = Form(default="1"),
+    mode: str = Form(default="mol2"),
+):
+    """配体阅读器：拆分/补氢后返回可编辑 MOL2（需登录）。"""
+    from engine.ligand_prepare import prepare_from_complex, prepare_one_mol2
+
+    do_h = (add_hydrogens or "1").strip() not in ("0", "false", "False", "no")
+    mode_k = (mode or "mol2").strip().lower()
+
+    try:
+        if mode_k == "complex":
+            if pdb_file is None or not pdb_file.filename:
+                raise HTTPException(status_code=400, detail="请上传复合物 PDB")
+            from engine.pdb_chains import norm_chain
+
+            raw_prot = [x for x in (protein_chains or "").split(",") if x != ""]
+            prot_list = [norm_chain(x) for x in raw_prot]
+            lig_keys = [x.strip() for x in (ligand_residues or "").split(",") if x.strip()]
+            if not prot_list:
+                raise HTTPException(status_code=400, detail="请至少选择一条蛋白链")
+            if not lig_keys:
+                raise HTTPException(status_code=400, detail="请至少选择一个配体残基")
+            if len(lig_keys) > 3:
+                raise HTTPException(status_code=400, detail="最多选择 3 个配体残基")
+
+            tmp = Path(TASKS_DIR) / "_ligand_reader_tmp"
+            tmp.mkdir(parents=True, exist_ok=True)
+            pdb_path = tmp / f"complex_{user['user_id'][:8]}.pdb"
+            with open(pdb_path, "wb") as f:
+                f.write(await pdb_file.read())
+            try:
+                result = prepare_from_complex(
+                    pdb_path, prot_list, lig_keys, add_hydrogens=do_h,
+                )
+            finally:
+                try:
+                    pdb_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return {"ok": True, "mode": "complex", **result}
+
+        # 独立 MOL2
+        uploads = [mol2_file, mol2_file_2, mol2_file_3]
+        ligands = []
+        idx = 0
+        for up in uploads:
+            if up is None or not up.filename:
+                continue
+            idx += 1
+            if idx > 3:
+                break
+            raw = Path(up.filename).name
+            if not raw.lower().endswith(".mol2"):
+                raise HTTPException(status_code=400, detail=f"配体 {idx} 须为 MOL2")
+            data = await up.read()
+            with tempfile.NamedTemporaryFile(suffix=".mol2", delete=False) as tf:
+                tf.write(data)
+                tmp_path = Path(tf.name)
+            try:
+                meta = prepare_one_mol2(
+                    tmp_path, add_hydrogens=do_h, name=f"ligand_{idx}.mol2",
+                )
+                meta["index"] = idx
+                ligands.append(meta)
+            finally:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        if not ligands:
+            raise HTTPException(status_code=400, detail="请至少上传一个 MOL2 配体")
+        return {"ok": True, "mode": "mol2", "protein_pdb": "", "ligands": ligands}
+    except HTTPException:
+        raise
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("配体准备失败")
+        raise HTTPException(status_code=500, detail=f"配体准备失败: {e}") from e
+
+
+class LigandEditBody(BaseModel):
+    """配体阅读器编辑请求。"""
+
+    mol2: str = Field(..., min_length=32)
+    action: str = Field(..., min_length=2)
+    atom_id: Optional[int] = Field(default=None, ge=1)
+
+
+@router.post("/ligand/edit")
+async def edit_ligand_reader(
+    body: LigandEditBody,
+    user: dict = Depends(get_current_user),
+):
+    """对配体 MOL2 执行补氢/去氢/点选加氢或删原子。"""
+    from engine.ligand_prepare import edit_mol2_text
+
+    _ = user
+    try:
+        meta = edit_mol2_text(body.mol2, body.action, atom_id=body.atom_id)
+        return {"ok": True, "ligand": meta}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("配体编辑失败")
+        raise HTTPException(status_code=500, detail=f"配体编辑失败: {e}") from e
 
 
 @router.post("/tasks")
