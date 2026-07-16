@@ -2,11 +2,21 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>跳转中… · WebMD</title>
+<script>
+(function () {
+  // 刷新 /prepare 或误开无 hash 的路径时，保留 query（如 task=）并进入体系准备
+  var q = location.search || "";
+  location.replace("/" + q + "#prepare");
+})();
+</script>
 <meta http-equiv="refresh" content="0;url=/#prepare">
-<title>跳转中…</title>
 </head>
 <body>
-<p>正在跳转到 <a href="/#prepare">WebMD · 体系准备</a></p>
-<script>location.replace("/#prepare");</script>
+<p>正在跳转到 <a id="go" href="/#prepare">WebMD · 体系准备</a>…</p>
+<script>
+document.getElementById("go").href = "/" + (location.search || "") + "#prepare";
+</script>
 </body>
 </html>

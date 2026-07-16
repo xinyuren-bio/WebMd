@@ -7,9 +7,9 @@
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api.auth import router as auth_router
@@ -39,6 +39,7 @@ init_db(Path(USERS_DB))
 try:
     from engine.autodl_runner import dispatch_queued_jobs
     import threading
+
     threading.Thread(target=dispatch_queued_jobs, daemon=True).start()
 except Exception as _md_e:
     logging.warning("启动时 MD 任务调度失败: %s", _md_e)
@@ -52,15 +53,45 @@ except Exception as _e:
 app.include_router(auth_router)
 app.include_router(router)
 
+frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+
+# 无 hash 的干净路径（刷新 /prepare 时浏览器只请求该路径，不带 #prepare）
+_SPA_ENTRY = {
+    "prepare": "prepare.html",
+    "analysis": "analysis.html",
+    "guide": "guide.html",
+}
+
 
 @app.get("/prepare")
-async def redirect_prepare(task: str = ""):
-    """兼容误访问 /prepare（无静态页）→ 首页体系准备；可带 task 打开支付。"""
-    if task.strip():
-        return RedirectResponse(url=f"/?task={task.strip()}#prepare", status_code=302)
-    return RedirectResponse(url="/#prepare", status_code=302)
+@app.get("/analysis")
+@app.get("/guide")
+async def spa_section_entry(request: Request):
+    """返回对应跳转页 HTML，避免刷新时落到 JSON Not Found。"""
+    key = request.url.path.strip("/").split("/", 1)[0]
+    name = _SPA_ENTRY.get(key, "prepare.html")
+    fp = frontend_dir / name
+    if not fp.is_file():
+        fp = frontend_dir / "index.html"
+    return FileResponse(fp, media_type="text/html; charset=utf-8")
 
 
-frontend_dir = Path(__file__).resolve().parent.parent / "frontend"
+@app.exception_handler(404)
+async def not_found_handler(request: Request, exc) -> FileResponse | JSONResponse:
+    """非 API 的 404 回退到首页，避免前端路由刷新只看到 JSON。"""
+    path = request.url.path or "/"
+    if (
+        path.startswith("/api")
+        or path.startswith("/docs")
+        or path.startswith("/redoc")
+        or path.startswith("/openapi")
+    ):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    index = frontend_dir / "index.html"
+    if index.is_file():
+        return FileResponse(index, media_type="text/html; charset=utf-8")
+    return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+
 if frontend_dir.exists():
     app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
