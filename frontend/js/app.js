@@ -1042,6 +1042,84 @@
     });
   }
 
+  /**
+   * 从状态页/我的任务深链恢复净电荷确认：/?task=JobID#prepare
+   */
+  function resumeChargeConfirmFromQuery() {
+    var params = new URLSearchParams(location.search);
+    var tid = (params.get("task") || "").trim();
+    if (!tid) return;
+
+    function run() {
+      if (!window.WebMdAuth || !window.WebMdAuth.getToken()) {
+        if (window.WebMdAuth) window.WebMdAuth.requireLogin();
+        return;
+      }
+      if (window.WebMD && typeof window.WebMD.switchView === "function") {
+        window.WebMD.switchView("prepare");
+      }
+      if (progressArea) progressArea.classList.remove("hidden");
+      if (taskIdDisplay) {
+        taskIdDisplay.innerHTML =
+          'Job ID：<a class="task-id-link" href="/status.html?id='
+          + encodeURIComponent(tid)
+          + '"><code>'
+          + tid
+          + "</code></a>";
+      }
+      showTaskQr(tid);
+
+      apiFetch("/api/tasks/" + tid)
+        .then(function (r) {
+          if (r.status === 401 || r.status === 403) {
+            window.WebMdAuth.requireLogin();
+            return null;
+          }
+          if (!r.ok) {
+            return r.json().then(function (e) {
+              throw new Error(e.detail || "无法加载任务");
+            });
+          }
+          return r.json();
+        })
+        .then(function (task) {
+          if (!task) return;
+          updatePipeline(task.status);
+          if (progressText) {
+            progressText.textContent = task.status_label || task.status;
+          }
+          if (task.status === "awaiting_charge_confirm") {
+            showChargeConfirmModal(tid, task);
+          } else if (task.status === "completed") {
+            if (sectionDownload) sectionDownload.classList.remove("hidden");
+            renderLigandFfSummary(task);
+            if (window.PaymentUI) window.PaymentUI.onTaskReady(tid);
+          } else if (task.status !== "failed") {
+            pollTask(tid);
+          }
+        })
+        .catch(function (e) {
+          showError(e.message || "恢复任务失败，请从「我的任务」重试");
+        });
+    }
+
+    run();
+    window.addEventListener("webmd-auth-changed", function onAuth() {
+      if (window.WebMdAuth && window.WebMdAuth.getToken()) {
+        window.removeEventListener("webmd-auth-changed", onAuth);
+        run();
+      }
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      setTimeout(resumeChargeConfirmFromQuery, 0);
+    });
+  } else {
+    setTimeout(resumeChargeConfirmFromQuery, 0);
+  }
+
   window.addEventListener("storage", updateSubmitButton);
   setInterval(updateSubmitButton, 2000);
   syncLigandTypeUi();

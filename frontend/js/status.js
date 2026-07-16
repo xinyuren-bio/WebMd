@@ -29,6 +29,12 @@
     if (d.simulation_time_ns != null) {
       html += "<p><strong>模拟时长</strong>：" + d.simulation_time_ns + " ns</p>";
     }
+    if (d.status === "awaiting_charge_confirm") {
+      html += "<p class=\"status-hint\">系统无法自动判断配体净电荷，需由您选择可行电荷后继续构建。请使用<strong>提交任务时登录的账号</strong>操作。</p>";
+      html += "<p><a class=\"btn btn-primary\" href=\"/?task="
+        + encodeURIComponent(taskId)
+        + "#prepare\">前往确认配体电荷</a></p>";
+    }
     if (d.status === "completed") {
       if (d.payment_status === "unpaid" && d.can_pay) {
         var payAmt = d.payment_amount != null ? Number(d.payment_amount).toFixed(0) : "150/240";

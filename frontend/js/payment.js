@@ -351,8 +351,27 @@
 
       currentTaskId = tid;
       var apiFetch = window.WebMdAuth.apiFetch;
-      apiFetch("/api/tasks/" + tid + "/payment")
+      apiFetch("/api/tasks/" + tid)
         .then(function (r) {
+          if (r.status === 401 || r.status === 403) {
+            window.WebMdAuth.requireLogin();
+            return null;
+          }
+          if (!r.ok) {
+            return r.json().then(function (e) {
+              throw new Error(e.detail || "无法加载任务");
+            });
+          }
+          return r.json();
+        })
+        .then(function (task) {
+          if (!task) return;
+          // 未完成前处理时不打开支付弹窗（净电荷确认等由 app.js 处理）
+          if (task.status !== "completed") return null;
+          return apiFetch("/api/tasks/" + tid + "/payment");
+        })
+        .then(function (r) {
+          if (!r) return null;
           if (r.status === 401 || r.status === 403) {
             window.WebMdAuth.requireLogin();
             return null;
