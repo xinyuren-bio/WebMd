@@ -531,17 +531,6 @@
       addH.disabled = pep;
       if (pep) addH.checked = false;
     }
-    // 小分子模式显示配体阅读器；肽模式隐藏
-    var lr = document.getElementById("section-ligand-reader");
-    if (lr) {
-      if (mol2) {
-        lr.classList.remove("hidden");
-      } else {
-        lr.classList.add("hidden");
-        if (window.LigandReader) window.LigandReader.reset();
-      }
-    }
-    if (window.WebMD) window.WebMD.confirmedLigandReader = null;
     if (complexMode && pdbInput && pdbInput.files[0]) {
       refreshComplexChains();
     } else {
@@ -561,13 +550,7 @@
   window.WebMD.onLigandChange = function () {
     updateSubmitButton();
     updatePreview();
-    if (window.WebMD) window.WebMD.confirmedLigandReader = null;
   };
-  window.WebMD.isMol2ComplexMode = function () {
-    return isMol2Mode() && isComplexMode();
-  };
-  window.WebMD.getSelectedProteinChains = getSelectedProteinChains;
-  window.WebMD.getSelectedLigandResidues = getSelectedLigandResidues;
 
   function getMol2Files() {
     if (window.WebMD && window.WebMD.getMol2Files) {
@@ -740,21 +723,11 @@
         return;
       }
     } else if (isMol2Mode() && isComplexMode()) {
-      var useReader =
-        window.WebMD &&
-        window.WebMD.confirmedLigandReader &&
-        window.WebMD.confirmedLigandReader.confirmed;
-      if (!useReader) {
-        if (
-          !pdbInput.files[0] ||
-          !getSelectedProteinChains().length ||
-          !getSelectedLigandResidues().length
-        ) {
-          return;
-        }
-        showError("请先在「配体阅读器」中准备并确认补氢结构，再提交任务");
-        var lrSec = document.getElementById("section-ligand-reader");
-        if (lrSec) lrSec.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (
+        !pdbInput.files[0] ||
+        !getSelectedProteinChains().length ||
+        !getSelectedLigandResidues().length
+      ) {
         return;
       }
     } else if (!pdbInput.files[0] || !getMol2Files().length) {
@@ -771,18 +744,7 @@
       params.protein_chains = getSelectedProteinChains().join(",");
       params.peptide_chain = getSelectedPeptideChain();
     }
-
-    // 已确认的配体阅读器结果：按「分开上传」提交，避免服务端再次拆分/补氢
-    var reader =
-      window.WebMD && window.WebMD.confirmedLigandReader && window.WebMD.confirmedLigandReader.confirmed
-        ? window.WebMD.confirmedLigandReader
-        : null;
-    if (reader && isMol2Mode()) {
-      params.peptide_upload_mode = "separate";
-      params.protein_chains = "";
-      params.ligand_residues = "";
-      params.ligand_add_hydrogens = "0";
-    } else if (isMol2Mode() && isComplexMode()) {
+    if (isMol2Mode() && isComplexMode()) {
       params.protein_chains = getSelectedProteinChains().join(",");
       params.ligand_residues = getSelectedLigandResidues().join(",");
     }
@@ -795,27 +757,16 @@
     resetPipeline();
 
     var formData = new FormData();
-    if (reader && isMol2Mode()) {
-      formData.append(
-        "pdb_file",
-        reader.proteinFile || pdbInput.files[0]
-      );
-      (reader.mol2Files || []).forEach(function (f, i) {
-        var key = i === 0 ? "mol2_file" : "mol2_file_" + (i + 1);
-        formData.append(key, f);
-      });
-    } else {
-      formData.append("pdb_file", pdbInput.files[0]);
-      if (isPeptideMode()) {
-        if (getUploadMode() === "separate") {
-          formData.append("cyclic_peptide_file", peptideInput.files[0]);
-        }
-      } else if (!isComplexMode()) {
-        if (window.WebMD && window.WebMD.appendMol2ToFormData) {
-          window.WebMD.appendMol2ToFormData(formData);
-        } else {
-          formData.append("mol2_file", mol2Input.files[0]);
-        }
+    formData.append("pdb_file", pdbInput.files[0]);
+    if (isPeptideMode()) {
+      if (getUploadMode() === "separate") {
+        formData.append("cyclic_peptide_file", peptideInput.files[0]);
+      }
+    } else if (!isComplexMode()) {
+      if (window.WebMD && window.WebMD.appendMol2ToFormData) {
+        window.WebMD.appendMol2ToFormData(formData);
+      } else {
+        formData.append("mol2_file", mol2Input.files[0]);
       }
     }
     Object.keys(params).forEach(function (key) {
@@ -871,7 +822,6 @@
           pending: 5,
           processing_protein: 15,
           processing_ligand: 30,
-          awaiting_charge_confirm: 35,
           solvating: 50,
           converting_gmx: 70,
           generating_mdp: 85,
@@ -879,12 +829,6 @@
           completed: 100,
         };
         progressFill.style.width = (progressMap[task.status] || 0) + "%";
-
-        if (task.status === "awaiting_charge_confirm") {
-          clearInterval(interval);
-          showChargeConfirmModal(taskId, task);
-          return;
-        }
 
         if (task.status === "completed") {
           clearInterval(interval);
@@ -1007,222 +951,6 @@
       items.join("") +
       "</ul><p class=\"hint\">以上设置已写入结果包中的 ligand_forcefield_summary.json</p>";
     box.classList.remove("hidden");
-  }
-
-  var chargeModal = document.getElementById("charge-confirm-modal");
-  var chargeMsg = document.getElementById("charge-confirm-msg");
-  var chargeSelect = document.getElementById("charge-confirm-select");
-  var chargeErr = document.getElementById("charge-confirm-error");
-  var chargeDiagLabel = document.getElementById("charge-diag-label");
-  var chargeDiagSqm = document.getElementById("charge-diag-sqm");
-  var chargeDiagAnte = document.getElementById("charge-diag-ante");
-  var chargeDiagAck = document.getElementById("charge-diag-ack");
-  var chargeDiagChecklist = document.getElementById("charge-diag-checklist");
-  var pendingChargeTaskId = null;
-  var pendingChargeLigIndex = 1;
-  var pendingDiagnosisKey = "unknown";
-
-  var DIAG_KEY_TO_TEXT = {
-    scf_not_converge: "SCF did not converge",
-    odd_electrons: "odd number of electrons",
-    unrecognized_atom: "unrecognized atom",
-    bad_geometry: "bad geometry",
-    bond_type: "cannot assign bond type",
-  };
-
-  function syncChargeConfirmOkEnabled() {
-    if (!btnChargeOk) return;
-    btnChargeOk.disabled = !(chargeDiagAck && chargeDiagAck.checked);
-  }
-
-  function hideChargeConfirmModal() {
-    if (chargeModal) chargeModal.classList.add("hidden");
-    if (chargeErr) {
-      chargeErr.textContent = "";
-      chargeErr.classList.add("hidden");
-    }
-    if (chargeDiagAck) chargeDiagAck.checked = false;
-    syncChargeConfirmOkEnabled();
-  }
-
-  function highlightDiagChecklist(key) {
-    if (!chargeDiagChecklist) return;
-    var matchText = DIAG_KEY_TO_TEXT[key] || "";
-    var items = chargeDiagChecklist.querySelectorAll("li");
-    items.forEach(function (li) {
-      var hit = matchText && li.textContent.indexOf(matchText) >= 0;
-      li.classList.toggle("is-match", !!hit);
-    });
-  }
-
-  function showChargeConfirmModal(taskId, task) {
-    var info = task.charge_confirm || {};
-    pendingChargeTaskId = taskId;
-    pendingChargeLigIndex = info.ligand_index || 1;
-    pendingDiagnosisKey = info.diagnosis_key || "unknown";
-    if (chargeMsg) {
-      chargeMsg.textContent =
-        info.message ||
-        "请先查看 sqm.out / antechamber 日志，再选择可行净电荷。";
-    }
-    if (chargeDiagLabel) {
-      chargeDiagLabel.textContent =
-        "系统判定：" + (info.diagnosis_label || "未归类（请查看下方完整日志）");
-    }
-    if (chargeDiagSqm) {
-      chargeDiagSqm.textContent = info.sqm_excerpt || "（无 sqm.out）";
-    }
-    if (chargeDiagAnte) {
-      chargeDiagAnte.textContent = info.antechamber_excerpt || "（无 antechamber 日志）";
-    }
-    highlightDiagChecklist(pendingDiagnosisKey);
-    if (chargeDiagAck) chargeDiagAck.checked = false;
-    if (chargeSelect) {
-      chargeSelect.innerHTML = "";
-      var opts = info.working_charges || [];
-      if (!opts.length) opts = [0];
-      opts.forEach(function (q) {
-        var o = document.createElement("option");
-        o.value = String(q);
-        o.textContent = String(q);
-        chargeSelect.appendChild(o);
-      });
-    }
-    syncChargeConfirmOkEnabled();
-    if (chargeModal) chargeModal.classList.remove("hidden");
-    progressText.textContent = "等待确认配体净电荷";
-  }
-
-  var btnChargeOk = document.getElementById("charge-confirm-ok");
-  var btnChargeCancel = document.getElementById("charge-confirm-cancel");
-  if (chargeDiagAck) {
-    chargeDiagAck.addEventListener("change", syncChargeConfirmOkEnabled);
-  }
-  if (btnChargeOk) {
-    btnChargeOk.addEventListener("click", async function () {
-      if (!pendingChargeTaskId || !chargeSelect) return;
-      if (!chargeDiagAck || !chargeDiagAck.checked) {
-        if (chargeErr) {
-          chargeErr.textContent = "请先勾选「已阅读诊断」后再继续";
-          chargeErr.classList.remove("hidden");
-        }
-        return;
-      }
-      try {
-        if (chargeErr) chargeErr.classList.add("hidden");
-        var resp = await apiFetch(
-          "/api/tasks/" + pendingChargeTaskId + "/confirm-charge",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ligand_index: pendingChargeLigIndex,
-              charge: parseInt(chargeSelect.value, 10),
-              ack_diagnosis: true,
-              diagnosis_key: pendingDiagnosisKey,
-            }),
-          }
-        );
-        if (!resp.ok) {
-          var err = await resp.json();
-          throw new Error(err.detail || "确认失败");
-        }
-        hideChargeConfirmModal();
-        progressArea.classList.remove("hidden");
-        progressText.textContent = "已确认净电荷，继续构建…";
-        pollTask(pendingChargeTaskId);
-      } catch (e) {
-        if (chargeErr) {
-          chargeErr.textContent = e.message || String(e);
-          chargeErr.classList.remove("hidden");
-        }
-      }
-    });
-  }
-  if (btnChargeCancel) {
-    btnChargeCancel.addEventListener("click", function () {
-      hideChargeConfirmModal();
-      btnSubmit.disabled = false;
-      btnSubmit.textContent = "重新提交";
-    });
-  }
-
-  /**
-   * 从状态页/我的任务深链恢复净电荷确认：/?task=JobID#prepare
-   */
-  function resumeChargeConfirmFromQuery() {
-    var params = new URLSearchParams(location.search);
-    var tid = (params.get("task") || "").trim();
-    if (!tid) return;
-
-    function run() {
-      if (!window.WebMdAuth || !window.WebMdAuth.getToken()) {
-        if (window.WebMdAuth) window.WebMdAuth.requireLogin();
-        return;
-      }
-      if (window.WebMD && typeof window.WebMD.switchView === "function") {
-        window.WebMD.switchView("prepare");
-      }
-      if (progressArea) progressArea.classList.remove("hidden");
-      if (taskIdDisplay) {
-        taskIdDisplay.innerHTML =
-          'Job ID：<a class="task-id-link" href="/status.html?id='
-          + encodeURIComponent(tid)
-          + '"><code>'
-          + tid
-          + "</code></a>";
-      }
-      showTaskQr(tid);
-
-      apiFetch("/api/tasks/" + tid)
-        .then(function (r) {
-          if (r.status === 401 || r.status === 403) {
-            window.WebMdAuth.requireLogin();
-            return null;
-          }
-          if (!r.ok) {
-            return r.json().then(function (e) {
-              throw new Error(e.detail || "无法加载任务");
-            });
-          }
-          return r.json();
-        })
-        .then(function (task) {
-          if (!task) return;
-          updatePipeline(task.status);
-          if (progressText) {
-            progressText.textContent = task.status_label || task.status;
-          }
-          if (task.status === "awaiting_charge_confirm") {
-            showChargeConfirmModal(tid, task);
-          } else if (task.status === "completed") {
-            if (sectionDownload) sectionDownload.classList.remove("hidden");
-            renderLigandFfSummary(task);
-            if (window.PaymentUI) window.PaymentUI.onTaskReady(tid);
-          } else if (task.status !== "failed") {
-            pollTask(tid);
-          }
-        })
-        .catch(function (e) {
-          showError(e.message || "恢复任务失败，请从「我的任务」重试");
-        });
-    }
-
-    run();
-    window.addEventListener("webmd-auth-changed", function onAuth() {
-      if (window.WebMdAuth && window.WebMdAuth.getToken()) {
-        window.removeEventListener("webmd-auth-changed", onAuth);
-        run();
-      }
-    });
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", function () {
-      setTimeout(resumeChargeConfirmFromQuery, 0);
-    });
-  } else {
-    setTimeout(resumeChargeConfirmFromQuery, 0);
   }
 
   window.addEventListener("storage", updateSubmitButton);

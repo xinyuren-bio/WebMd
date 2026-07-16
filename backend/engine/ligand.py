@@ -21,10 +21,6 @@ from rdkit import Chem
 
 from .env_check import check_external_tools, repair_ambertools, source_amber_env
 from .ligand_charge import (
-    ChargeConfirmNeeded,
-    ChargeConfirmRequest,
-    build_charge_confirm_message,
-    collect_charge_failure_diagnostics,
     detect_ligand_charge,
     pick_initial_charge,
     probe_working_charges,
@@ -567,32 +563,6 @@ def _save_antechamber_log(lig_dir: Path, r: subprocess.CompletedProcess, net_cha
             shutil.copy2(sqm, lig_dir / "sqm_fail.out")
 
 
-def _charge_confirm_from_dir(
-    *,
-    lig_dir: Path,
-    ligand_index: int,
-    ligand_name: str,
-    original_charge: int | None,
-    working: list[int],
-) -> ChargeConfirmRequest:
-    """根据工作目录日志组装须用户确认的载荷。"""
-    diag = collect_charge_failure_diagnostics(lig_dir)
-    return ChargeConfirmRequest(
-        ligand_index=ligand_index,
-        ligand_name=ligand_name,
-        original_charge=original_charge,
-        working_charges=working,
-        message=build_charge_confirm_message(
-            diag["diagnosis_label"], working, original_charge,
-        ),
-        diagnosis_key=diag["diagnosis_key"],
-        diagnosis_label=diag["diagnosis_label"],
-        sqm_excerpt=diag["sqm_excerpt"],
-        antechamber_excerpt=diag["antechamber_excerpt"],
-        ligand_subdir=lig_dir.name,
-    )
-
-
 def _run_antechamber(
     mol2_in: Path,
     ac_mol2: Path,
@@ -724,7 +694,7 @@ def parameterize_ligand(
 ) -> tuple[str, str, dict[str, Any]]:
     """antechamber + parmchk2 参数化。
 
-    自动判电荷；失败时可探测其他电荷但禁止静默采用，改为抛出 ChargeConfirmNeeded。
+    自动判电荷；失败时探测其他整数电荷并自动采用第一个可行值。
     返回 (gaff_mol2, frcmod, ff_summary)。
     """
     check_external_tools()
@@ -775,7 +745,7 @@ def parameterize_ligand(
         net_charge = pick_initial_charge(detection)
         charge_source = detection.source or "auto"
         if net_charge is None:
-            # 无法自动判断：直接探测可行电荷并请用户确认
+            # 无法自动判断：探测可行电荷并自动采用第一个
             repaired = repair_ambertools()
             if repaired:
                 logger.info("AmberTools 补全: %s", ", ".join(repaired))
@@ -785,17 +755,16 @@ def parameterize_ligand(
                 return _run_antechamber(mol2_dest, ac_mol2, q, lig_dir, env)
 
             working = probe_working_charges(_try, None)
-            if working:
-                raise ChargeConfirmNeeded(_charge_confirm_from_dir(
-                    lig_dir=lig_dir,
-                    ligand_index=ligand_index,
-                    ligand_name=Path(mol2_path).name,
-                    original_charge=None,
-                    working=working,
-                ))
-            raise RuntimeError(
-                "无法判断配体净电荷，且常见电荷均无法完成 AM1-BCC 计算。"
-                "请检查结构后重试。"
+            if not working:
+                raise RuntimeError(
+                    "无法判断配体净电荷，且常见电荷均无法完成 AM1-BCC 计算。"
+                    "请检查结构后重试。"
+                )
+            net_charge = int(working[0])
+            charge_source = "auto_probe"
+            logger.warning(
+                "无法自动判断净电荷，已自动采用探测成功的 nc=%d（候选：%s）",
+                net_charge, working,
             )
 
     repaired = repair_ambertools()
@@ -806,27 +775,28 @@ def parameterize_ligand(
     ok = _run_antechamber(mol2_dest, ac_mol2, int(net_charge), lig_dir, env)
 
     if not ok and confirmed_charge is None:
-        # 原自动电荷失败：探测其他电荷，供用户确认，禁止静默采用
+        # 原自动电荷失败：探测其他电荷并自动采用
         def _try(q: int) -> bool:
             return _run_antechamber(mol2_dest, ac_mol2, q, lig_dir, env)
 
         working = probe_working_charges(_try, int(net_charge))
-        if working:
-            raise ChargeConfirmNeeded(_charge_confirm_from_dir(
-                lig_dir=lig_dir,
-                ligand_index=ligand_index,
-                ligand_name=Path(mol2_path).name,
-                original_charge=int(net_charge),
-                working=working,
-            ))
-        raise RuntimeError(
-            f"配体参数化失败（净电荷 {net_charge} 及常见备选均未通过）。"
-            "请检查结构、质子化与键连后重新上传。"
+        if not working:
+            raise RuntimeError(
+                f"配体参数化失败（净电荷 {net_charge} 及常见备选均未通过）。"
+                "请检查结构、质子化与键连后重新上传。"
+            )
+        old_nc = int(net_charge)
+        net_charge = int(working[0])
+        charge_source = "auto_probe"
+        logger.warning(
+            "原净电荷 nc=%d 失败，已自动改用 nc=%d（候选：%s）",
+            old_nc, net_charge, working,
         )
+        ok = _run_antechamber(mol2_dest, ac_mol2, int(net_charge), lig_dir, env)
 
     if not ok:
         raise RuntimeError(
-            f"配体参数化失败（已使用确认净电荷 {net_charge}）。请检查结构后重试。"
+            f"配体参数化失败（净电荷 {net_charge}）。请检查结构后重试。"
         )
 
     frcmod = lig_dir / f"{mol2_name}.frcmod"

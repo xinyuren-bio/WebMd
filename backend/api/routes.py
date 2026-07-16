@@ -33,11 +33,6 @@ from config import USERS_DB
 from api.deps import get_current_user
 from models import Task, TaskStatus, tasks
 from engine.pipeline import run_pipeline
-from engine.ligand_charge import (
-    ChargeConfirmNeeded,
-    collect_charge_failure_diagnostics,
-    resolve_ligand_work_subdir,
-)
 from engine.autodl_runner import (
     submit_md_job, dispatch_queued_jobs, pull_analysis_from_remote,
     pull_deliverables_from_remote, finalize_md_delivery,
@@ -108,17 +103,6 @@ def _execute_task(
         from gro_util import count_gro_atoms
         gro_p = Path(task.work_dir) / "system.gro"
         task.atom_count = count_gro_atoms(gro_p)
-    except ChargeConfirmNeeded as e:
-        # 不标失败：等待用户确认可行净电荷
-        task.status = TaskStatus.AWAITING_CHARGE_CONFIRM
-        task.error_message = e.req.message
-        task.params = dict(task.params or params)
-        task.params["charge_confirm"] = e.req.to_dict()
-        # 记住原始路径以便确认后续跑
-        task.params["_resume_pdb"] = pdb_path
-        task.params["_resume_mol2s"] = mol2_paths or []
-        task.params["_resume_cyclic"] = cyclic_pdb_path
-        logger.info("任务 %s 等待确认净电荷: %s", task_id, e.req.working_charges)
     except Exception as e:
         task.status = TaskStatus.FAILED
         task.error_message = str(e)
@@ -138,43 +122,6 @@ def _task_owner_or_404(task_id: str, user: dict) -> Task:
     return task
 
 
-def _enrich_charge_confirm(task: Task) -> dict | None:
-    """补全 charge_confirm 诊断字段（兼容旧任务，从工作目录回填）。"""
-    conf = dict(task.params.get("charge_confirm") or {})
-    if not conf and task.status != TaskStatus.AWAITING_CHARGE_CONFIRM:
-        return None
-    if not conf:
-        conf = {
-            "ligand_index": 1,
-            "ligand_name": "",
-            "original_charge": None,
-            "working_charges": [],
-            "message": task.error_message or "请确认配体净电荷",
-        }
-    has_log = bool(conf.get("sqm_excerpt") or conf.get("antechamber_excerpt"))
-    if has_log and conf.get("diagnosis_key"):
-        return conf
-    sub = resolve_ligand_work_subdir(
-        task.work_dir,
-        int(conf.get("ligand_index") or 1),
-        str(conf.get("ligand_name") or ""),
-    )
-    if not sub:
-        conf.setdefault("diagnosis_key", "unknown")
-        conf.setdefault("diagnosis_label", "未归类（工作目录中未找到配体日志）")
-        conf.setdefault("sqm_excerpt", "（无 sqm.out）")
-        conf.setdefault("antechamber_excerpt", "（无 antechamber 日志）")
-        return conf
-    diag = collect_charge_failure_diagnostics(
-        sub,
-        extra_text="\n".join(task.log_lines[-80:] if task.log_lines else []),
-    )
-    conf["diagnosis_key"] = diag["diagnosis_key"]
-    conf["diagnosis_label"] = diag["diagnosis_label"]
-    conf["sqm_excerpt"] = diag["sqm_excerpt"]
-    conf["antechamber_excerpt"] = diag["antechamber_excerpt"]
-    conf["ligand_subdir"] = sub.name
-    return conf
 
 
 def _payment_payload(task: Task) -> dict:
@@ -206,170 +153,6 @@ def _payment_payload(task: Task) -> dict:
         "wechat_qr_url": wechat_qr_url,
     }
 
-
-@router.post("/ligand/prepare")
-async def prepare_ligand_reader(
-    user: dict = Depends(get_current_user),
-    mol2_file: Optional[UploadFile] = File(None),
-    mol2_file_2: Optional[UploadFile] = File(None),
-    mol2_file_3: Optional[UploadFile] = File(None),
-    pdb_file: Optional[UploadFile] = File(None),
-    protein_chains: str = Form(default=""),
-    ligand_residues: str = Form(default=""),
-    add_hydrogens: str = Form(default="1"),
-    mode: str = Form(default="mol2"),
-):
-    """配体阅读器：拆分/补氢后返回可编辑 MOL2（需登录）。"""
-    from engine.ligand_prepare import prepare_from_complex, prepare_one_mol2
-
-    do_h = (add_hydrogens or "1").strip() not in ("0", "false", "False", "no")
-    mode_k = (mode or "mol2").strip().lower()
-
-    try:
-        if mode_k == "complex":
-            if pdb_file is None or not pdb_file.filename:
-                raise HTTPException(status_code=400, detail="请上传复合物 PDB")
-            from engine.pdb_chains import norm_chain
-
-            raw_prot = [x for x in (protein_chains or "").split(",") if x != ""]
-            prot_list = [norm_chain(x) for x in raw_prot]
-            lig_keys = [x.strip() for x in (ligand_residues or "").split(",") if x.strip()]
-            if not prot_list:
-                raise HTTPException(status_code=400, detail="请至少选择一条蛋白链")
-            if not lig_keys:
-                raise HTTPException(status_code=400, detail="请至少选择一个配体残基")
-            if len(lig_keys) > 3:
-                raise HTTPException(status_code=400, detail="最多选择 3 个配体残基")
-
-            tmp = Path(TASKS_DIR) / "_ligand_reader_tmp"
-            tmp.mkdir(parents=True, exist_ok=True)
-            pdb_path = tmp / f"complex_{user['user_id'][:8]}.pdb"
-            with open(pdb_path, "wb") as f:
-                f.write(await pdb_file.read())
-            try:
-                result = prepare_from_complex(
-                    pdb_path, prot_list, lig_keys, add_hydrogens=do_h,
-                )
-            finally:
-                try:
-                    pdb_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-            return {"ok": True, "mode": "complex", **result}
-
-        # 独立 MOL2
-        uploads = [mol2_file, mol2_file_2, mol2_file_3]
-        ligands = []
-        idx = 0
-        for up in uploads:
-            if up is None or not up.filename:
-                continue
-            idx += 1
-            if idx > 3:
-                break
-            raw = Path(up.filename).name
-            if not raw.lower().endswith(".mol2"):
-                raise HTTPException(status_code=400, detail=f"配体 {idx} 须为 MOL2")
-            data = await up.read()
-            with tempfile.NamedTemporaryFile(suffix=".mol2", delete=False) as tf:
-                tf.write(data)
-                tmp_path = Path(tf.name)
-            try:
-                meta = prepare_one_mol2(
-                    tmp_path, add_hydrogens=do_h, name=f"ligand_{idx}.mol2",
-                )
-                meta["index"] = idx
-                ligands.append(meta)
-            finally:
-                try:
-                    tmp_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
-        if not ligands:
-            raise HTTPException(status_code=400, detail="请至少上传一个 MOL2 配体")
-        return {"ok": True, "mode": "mol2", "protein_pdb": "", "ligands": ligands}
-    except HTTPException:
-        raise
-    except (ValueError, RuntimeError) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        logger.exception("配体准备失败")
-        raise HTTPException(status_code=500, detail=f"配体准备失败: {e}") from e
-
-
-class LigandEditBody(BaseModel):
-    """配体阅读器编辑请求。"""
-
-    mol2: str = Field(..., min_length=32)
-    action: str = Field(..., min_length=2)
-    atom_id: Optional[int] = Field(default=None, ge=1)
-
-
-@router.post("/ligand/edit")
-async def edit_ligand_reader(
-    body: LigandEditBody,
-    user: dict = Depends(get_current_user),
-):
-    """对配体 MOL2 执行补氢/去氢/点选加氢或删原子。"""
-    from engine.ligand_prepare import edit_mol2_text
-
-    _ = user
-    try:
-        meta = edit_mol2_text(body.mol2, body.action, atom_id=body.atom_id)
-        return {"ok": True, "ligand": meta}
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        logger.exception("配体编辑失败")
-        raise HTTPException(status_code=500, detail=f"配体编辑失败: {e}") from e
-
-
-class LigandToEditorBody(BaseModel):
-    """MOL2 → JSME 编辑格式。"""
-
-    mol2: str = Field(..., min_length=32)
-
-
-class LigandFromEditorBody(BaseModel):
-    """JSME MOL/SMILES → MOL2。"""
-
-    mol: str = ""
-    smiles: str = ""
-    gen3d: bool = True
-
-
-@router.post("/ligand/to-editor")
-async def ligand_to_editor(
-    body: LigandToEditorBody,
-    user: dict = Depends(get_current_user),
-):
-    """将当前配体 MOL2 转为 JSME 可编辑的 MOL/SMILES。"""
-    from engine.ligand_prepare import mol2_to_editor_formats
-
-    _ = user
-    try:
-        return {"ok": True, **mol2_to_editor_formats(body.mol2)}
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-
-@router.post("/ligand/from-editor")
-async def ligand_from_editor(
-    body: LigandFromEditorBody,
-    user: dict = Depends(get_current_user),
-):
-    """将 JSME 编辑结果转回三维 MOL2。"""
-    from engine.ligand_prepare import editor_to_mol2
-
-    _ = user
-    try:
-        meta = editor_to_mol2(mol=body.mol, smiles=body.smiles, gen3d=body.gen3d)
-        return {"ok": True, "ligand": meta}
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        logger.exception("JSME 结构回写失败")
-        raise HTTPException(status_code=500, detail=f"结构回写失败: {e}") from e
 
 
 @router.post("/tasks")
@@ -642,78 +425,8 @@ async def list_my_tasks(
 @router.get("/tasks/{task_id}")
 async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     task = _task_owner_or_404(task_id, user)
-    data = task.to_dict()
-    if task.status == TaskStatus.AWAITING_CHARGE_CONFIRM:
-        enriched = _enrich_charge_confirm(task)
-        if enriched:
-            data["charge_confirm"] = enriched
-    return data
+    return task.to_dict()
 
-
-class ChargeConfirmBody(BaseModel):
-    """用户确认采用的配体净电荷。"""
-
-    ligand_index: int = Field(..., ge=1, le=3)
-    charge: int
-    # 用户确认已阅读失败诊断日志
-    ack_diagnosis: bool = False
-    diagnosis_key: str = ""
-
-
-@router.post("/tasks/{task_id}/confirm-charge")
-async def confirm_ligand_charge(
-    task_id: str,
-    body: ChargeConfirmBody,
-    background_tasks: BackgroundTasks,
-    user: dict = Depends(get_current_user),
-):
-    """确认净电荷后继续前处理（仅 awaiting_charge_confirm 状态可用）。"""
-    task = _task_owner_or_404(task_id, user)
-    if task.status != TaskStatus.AWAITING_CHARGE_CONFIRM:
-        raise HTTPException(status_code=400, detail="当前任务不需要确认净电荷")
-    conf = _enrich_charge_confirm(task) or dict(task.params.get("charge_confirm") or {})
-    allowed = list(conf.get("working_charges") or [])
-    if body.charge not in allowed:
-        raise HTTPException(
-            status_code=400,
-            detail=f"请选择提示中的可行净电荷：{allowed}",
-        )
-    # 结构类错误不应仅靠改电荷绕过；仍要求用户勾选已阅读诊断
-    if not body.ack_diagnosis:
-        raise HTTPException(
-            status_code=400,
-            detail="请先查看 sqm.out / antechamber 日志并勾选「已阅读诊断」后再继续",
-        )
-    expected_key = str(conf.get("diagnosis_key") or "unknown")
-    if body.diagnosis_key and body.diagnosis_key != expected_key:
-        raise HTTPException(
-            status_code=400,
-            detail="诊断信息已更新，请刷新后重新确认",
-        )
-    # 非电荷类结构问题：给出明确警告但仍允许在用户确认后继续（探测已成功）
-    struct_keys = {"unrecognized_atom", "bad_geometry", "bond_type"}
-    if expected_key in struct_keys:
-        logger.warning(
-            "任务 %s 诊断为结构类问题(%s)，用户仍确认采用净电荷 %s",
-            task_id, expected_key, body.charge,
-        )
-    confirmed = dict(task.params.get("confirmed_charges") or {})
-    confirmed[str(body.ligand_index)] = body.charge
-    task.params["confirmed_charges"] = confirmed
-    task.params.pop("charge_confirm", None)
-    task.error_message = ""
-    task.status = TaskStatus.PROCESSING_LIGAND
-    task.save()
-
-    pdb_path = task.params.get("_resume_pdb") or str(Path(task.work_dir) / "protein.pdb")
-    mol2s = task.params.get("_resume_mol2s")
-    if not mol2s:
-        mol2s = sorted(str(p) for p in Path(task.work_dir).glob("ligand_*.mol2"))
-    cyclic = task.params.get("_resume_cyclic")
-    background_tasks.add_task(
-        _execute_task, task_id, pdb_path, mol2s, dict(task.params), cyclic,
-    )
-    return {"ok": True, "task_id": task_id, "confirmed_charges": confirmed}
 
 
 @router.get("/tasks/{task_id}/public")

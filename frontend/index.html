@@ -4,10 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260716s">
-<link rel="stylesheet" href="/assets/jsme/jsa.css">
-<link rel="stylesheet" href="/assets/jsme/gwt/chrome/chrome.css">
-<link rel="stylesheet" href="/assets/jsme/gwt/chrome/mosaic.css">
+<link rel="stylesheet" href="/css/style.css?v=20260716t">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -354,43 +351,6 @@
     <div id="ngl-viewport" class="ngl-viewport"></div>
   </section>
 
-  <!-- 配体阅读器：JSME 二维编辑（类 Molecule Search / CHARMM-GUI） -->
-  <section class="card hidden" id="section-ligand-reader">
-    <div class="card-header">
-      <div class="step-badge">2b</div>
-      <div>
-        <h2>配体阅读器 · 结构编辑</h2>
-        <p class="card-subtitle">类似 JSME 分子编辑器：可改氢、改键、改电荷；确认后用于参数化</p>
-      </div>
-    </div>
-    <p class="hint" id="ligand-reader-hint">
-      复合物 PDB：选好蛋白链与配体残基后点「准备配体」→ 在下方画板中编辑 →「应用编辑到 MOL2」→「确认配体结构」→ 再提交。
-    </p>
-    <div class="ligand-reader-toolbar">
-      <button type="button" class="btn btn-primary" id="btn-ligand-prepare">准备配体（拆分并补氢）</button>
-      <button type="button" class="btn btn-secondary" id="btn-ligand-add-h" disabled>全部补氢</button>
-      <button type="button" class="btn btn-secondary" id="btn-ligand-strip-h" disabled>去除全部氢</button>
-      <button type="button" class="btn btn-secondary" id="btn-jsme-apply" disabled>应用编辑到 MOL2</button>
-      <label class="checkbox-inline" for="jsme-gen3d" title="对接复合物建议关闭，改用全部补氢以保留姿态">
-        <input type="checkbox" id="jsme-gen3d">
-        <span>重新生成 3D 坐标</span>
-      </label>
-      <button type="button" class="btn btn-primary" id="btn-ligand-confirm" disabled>确认配体结构</button>
-      <span class="ligand-reader-meta" id="ligand-reader-meta"></span>
-    </div>
-    <div class="ligand-reader-smiles-row">
-      <label for="ligand-smiles-input">SMILES</label>
-      <input type="text" id="ligand-smiles-input" class="payment-payer-note" placeholder="编辑器会同步 SMILES，也可粘贴后点加载">
-      <button type="button" class="btn btn-secondary btn-sm" id="btn-smiles-load" disabled>加载到画板</button>
-    </div>
-    <div id="ligand-reader-tabs" class="ligand-reader-tabs"></div>
-    <div id="ligand-reader-warn" class="viewer-error hidden" role="alert"></div>
-    <div class="ligand-reader-panel">
-      <p class="stepDescription">二维编辑（JSME · 显示氢）</p>
-      <div id="jsme-applet" class="jsme-applet"></div>
-    </div>
-    <p class="status-hint" id="ligand-reader-status">尚未准备配体</p>
-  </section>
 
   <section class="card" id="section-params">
     <div class="card-header">
@@ -469,7 +429,7 @@
             <input type="checkbox" id="ligand-add-h" checked>
             <span>配体自动补氢</span>
           </label>
-          <p class="hint">若已在「配体阅读器」中确认结构，提交时将自动关闭二次补氢，避免重复处理。</p>
+          <p class="hint">PyMOL 拆出的小分子常缺氢；默认开启，在 GAFF2 参数化前自动补全（推荐）</p>
         </div>
       </div>
     </details>
@@ -982,45 +942,6 @@
 
 </div>
 
-<div id="charge-confirm-modal" class="payment-modal hidden" role="dialog" aria-modal="true" aria-labelledby="charge-confirm-title">
-  <div class="payment-modal-backdrop" id="charge-confirm-backdrop"></div>
-  <div class="payment-modal-panel charge-confirm-panel">
-    <h3 id="charge-confirm-title">确认配体净电荷</h3>
-    <p id="charge-confirm-msg" class="payment-amount-hint"></p>
-    <div id="charge-diag-box" class="charge-diag-box">
-      <p class="charge-diag-title">失败诊断（请先阅读）</p>
-      <p id="charge-diag-label" class="charge-diag-label"></p>
-      <ul class="charge-diag-checklist" id="charge-diag-checklist">
-        <li>SCF did not converge</li>
-        <li>odd number of electrons</li>
-        <li>unrecognized atom</li>
-        <li>bad geometry</li>
-        <li>cannot assign bond type</li>
-      </ul>
-      <details open>
-        <summary>sqm.out 错误末尾</summary>
-        <pre id="charge-diag-sqm" class="charge-diag-log"></pre>
-      </details>
-      <details>
-        <summary>antechamber 完整错误末尾</summary>
-        <pre id="charge-diag-ante" class="charge-diag-log"></pre>
-      </details>
-      <p class="charge-diag-hint">若诊断为结构问题（无法识别原子 / 几何异常 / 键型），建议修正 MOL2 后重新提交，而不是直接改电荷继续。</p>
-    </div>
-    <label class="auth-label charge-ack-label" for="charge-diag-ack">
-      <input type="checkbox" id="charge-diag-ack">
-      <span>我已阅读上方 sqm.out / antechamber 日志，并理解失败原因</span>
-    </label>
-    <label class="auth-label" for="charge-confirm-select">采用净电荷</label>
-    <select id="charge-confirm-select" class="payment-payer-note"></select>
-    <div class="payment-modal-actions">
-      <button type="button" class="btn btn-primary" id="charge-confirm-ok" disabled>采用并继续</button>
-      <button type="button" class="btn btn-secondary" id="charge-confirm-cancel">取消</button>
-    </div>
-    <p class="payment-error hidden" id="charge-confirm-error"></p>
-  </div>
-</div>
-
 <div id="auth-modal" class="payment-modal hidden" role="dialog" aria-modal="true">
   <div class="payment-modal-backdrop" id="auth-modal-backdrop"></div>
   <div class="payment-modal-panel auth-modal-panel">
@@ -1090,9 +1011,7 @@
 <script src="/js/viewer.js?v=20260716e"></script>
 <script src="/js/payment.js?v=20260716m"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
-<script type="text/javascript" src="/assets/jsme/jsme.nocache.js"></script>
-<script src="/js/ligand_reader.js?v=20260716s"></script>
-<script src="/js/app.js?v=20260716q"></script>
+<script src="/js/app.js?v=20260716t"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
 </html>

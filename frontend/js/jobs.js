@@ -56,12 +56,6 @@
           '<p class="jobs-error">' + escapeHtml(t.error_message) + "</p>";
       }
       var actions = '<a href="' + href + '">查看进度</a>';
-      if (t.status === "awaiting_charge_confirm") {
-        actions +=
-          ' · <a href="/?task='
-          + encodeURIComponent(t.task_id)
-          + '#prepare">确认配体电荷</a>';
-      }
       if (t.status === "completed" && t.payment_status === "unpaid") {
         actions +=
           ' · <a href="/?task='
