@@ -10,7 +10,11 @@
   var btnDownload = document.getElementById("btn-download");
   var downloadHint = document.getElementById("download-hint");
   var qrImg = document.getElementById("payment-qr");
+  var wechatQrImg = document.getElementById("payment-wechat-qr");
   var amountEl = document.getElementById("payment-amount");
+  var amountHintEl = document.getElementById("payment-amount-hint");
+  var amountNoteEl = document.getElementById("payment-amount-note");
+  var modalTitleEl = document.getElementById("payment-modal-title");
   var taskIdEl = document.getElementById("payment-task-id");
   var payerNoteEl = document.getElementById("payment-payer-note");
   var pendingBox = document.getElementById("payment-pending-box");
@@ -21,10 +25,25 @@
   var tipTaskId = document.getElementById("tip-task-id");
 
   var currentTaskId = null;
-  var paymentConfig = { amount: 30, qr_url: "/assets/images/pay.jpg", enabled: false, tip_enabled: true };
-  var paymentEnabled = false;
+  var paymentConfig = { amount: 240, qr_url: "/assets/images/pay.jpg", wechat_qr_url: "/assets/images/wechat_pay.png", enabled: true, tip_enabled: false };
+  var paymentEnabled = true;
   var tipEnabled = false;
   var pollTimer = null;
+
+  function apiFetch(url, opts) {
+    if (window.WebMdAuth && window.WebMdAuth.apiFetch) {
+      return window.WebMdAuth.apiFetch(url, opts);
+    }
+    return fetch(url, opts);
+  }
+
+  function hideDownloadBtn() {
+    if (btnDownload) btnDownload.classList.add("hidden");
+  }
+
+  function showDownloadBtn() {
+    if (btnDownload) btnDownload.classList.remove("hidden");
+  }
 
   function hideTipSection() {
     if (tipSection) tipSection.classList.add("hidden");
@@ -54,6 +73,14 @@
     showTipSection(taskId);
   }
 
+  function setAmountDisplay(amount) {
+    var a = formatAmount(amount);
+    if (amountEl) amountEl.textContent = a;
+    if (amountHintEl) amountHintEl.textContent = a;
+    if (amountNoteEl) amountNoteEl.textContent = a;
+    if (modalTitleEl) modalTitleEl.textContent = "支付 ¥" + a + " 启动 MD 模拟";
+  }
+
   function formatAmount(n) {
     return Number(n).toFixed(2);
   }
@@ -81,6 +108,8 @@
         paymentEnabled = cfg.enabled === true;
         tipEnabled = cfg.tip_enabled === true;
         if (cfg.tip_qr_url && tipQr) tipQr.src = cfg.tip_qr_url;
+        if (cfg.qr_url && qrImg) qrImg.src = cfg.qr_url;
+        if (cfg.wechat_qr_url && wechatQrImg) wechatQrImg.src = cfg.wechat_qr_url;
         if (!paymentEnabled) {
           enableFreeDownloadMode();
           return;
@@ -108,7 +137,7 @@
       return;
     }
     var a = amount != null ? formatAmount(amount) : formatAmount(paymentConfig.amount);
-    btnPayDownload.textContent = "支付宝支付 ¥" + a + " 后下载";
+    btnPayDownload.textContent = "支付 ¥" + a + " 启动模拟";
   }
 
   function showModal(taskId, paymentData) {
@@ -153,26 +182,22 @@
     var status = data.payment_status || (data.paid ? "paid" : "unpaid");
 
     if (data.qr_url && qrImg) qrImg.src = data.qr_url;
+    if (data.wechat_qr_url && wechatQrImg) wechatQrImg.src = data.wechat_qr_url;
     if (amount != null) {
       paymentConfig.amount = amount;
-      if (amountEl) amountEl.textContent = formatAmount(amount);
+      setAmountDisplay(amount);
     }
 
     if (status === "paid") {
       stopPolling();
       if (btnPayDownload) btnPayDownload.classList.add("hidden");
-      if (btnDownload) {
-        btnDownload.classList.remove("hidden");
-        btnDownload.href = "/api/tasks/" + taskId + "/download";
+      if (btnDownload) showDownloadBtn();
+      if (downloadHint) {
+        downloadHint.textContent = "支付已核实，可下载文件包；MD 模拟将自动排队运行";
       }
-      if (downloadHint) downloadHint.textContent = "支付已核实，可下载结果包";
       hideTipSection();
     } else if (status === "pending") {
-      if (btnDownload) {
-        btnDownload.classList.add("hidden");
-        btnDownload.removeAttribute("href");
-      }
-      updatePayButtonLabel("pending", amount);
+      if (btnDownload) hideDownloadBtn();
       if (downloadHint) {
         downloadHint.textContent = "支付核实中，请稍候。核实通过后将自动出现下载按钮";
       }
@@ -180,14 +205,11 @@
     } else {
       stopPolling();
       if (btnPayDownload) btnPayDownload.classList.remove("hidden");
-      if (btnDownload) {
-        btnDownload.classList.add("hidden");
-        btnDownload.removeAttribute("href");
-      }
+      if (btnDownload) hideDownloadBtn();
       updatePayButtonLabel("unpaid", amount);
       if (downloadHint) {
         var a = amount != null ? formatAmount(amount) : formatAmount(paymentConfig.amount);
-        downloadHint.textContent = "扫码支付 ¥" + a + " 并确认后，等待核实即可下载";
+        downloadHint.textContent = "前处理已完成。支付 ¥" + a + " 后等待核实，通过后可下载并启动 MD";
       }
     }
   }
@@ -198,7 +220,7 @@
       showFreeDownload(taskId);
       return;
     }
-    fetch("/api/tasks/" + taskId + "/payment")
+    apiFetch("/api/tasks/" + taskId + "/payment")
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         if (!data) return;
@@ -226,7 +248,7 @@
     var fd = new FormData();
     fd.append("payer_note", payerNoteEl ? payerNoteEl.value.trim() : "");
 
-    fetch("/api/tasks/" + currentTaskId + "/payment/confirm", {
+    apiFetch("/api/tasks/" + currentTaskId + "/payment/confirm", {
       method: "POST",
       body: fd,
     })
@@ -261,10 +283,12 @@
   if (btnPayDownload) {
     btnPayDownload.addEventListener("click", function () {
       if (!paymentEnabled || !currentTaskId) return;
-      fetch("/api/tasks/" + currentTaskId + "/payment")
+      apiFetch("/api/tasks/" + currentTaskId + "/payment")
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
-          if (data && amountEl) amountEl.textContent = formatAmount(data.payment_amount || data.amount);
+          if (data) {
+            applyPaymentData(currentTaskId, data);
+          }
           showModal(currentTaskId, data);
         })
         .catch(function () {
@@ -276,6 +300,20 @@
   if (btnCancel) btnCancel.addEventListener("click", hideModal);
   if (btnClose) btnClose.addEventListener("click", hideModal);
   if (backdrop) backdrop.addEventListener("click", hideModal);
+
+  if (btnDownload) {
+    btnDownload.addEventListener("click", function () {
+      if (!currentTaskId || !window.WebMdAuth) return;
+      btnDownload.disabled = true;
+      window.WebMdAuth.downloadWithAuth(currentTaskId)
+        .catch(function (e) {
+          alert(e.message || "下载失败");
+        })
+        .finally(function () {
+          btnDownload.disabled = false;
+        });
+    });
+  }
 
   loadConfig();
 
@@ -299,10 +337,7 @@
         btnPayDownload.classList.remove("hidden");
         btnPayDownload.disabled = false;
       }
-      if (btnDownload) {
-        btnDownload.classList.add("hidden");
-        btnDownload.removeAttribute("href");
-      }
+      if (btnDownload) hideDownloadBtn();
     },
   };
 })();

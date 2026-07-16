@@ -156,6 +156,16 @@ def repair_ambertools() -> list[str]:
     acpype_bin = _acpype_amber_bin_dir()
     fixed: list[str] = []
 
+    # 同步 sqm 等 antechamber 依赖
+    for b in ("sqm", "nmogel", "prepgen"):
+        dest = ah / "bin" / b
+        if dest.is_file():
+            continue
+        if pkg and _copy_if_missing(pkg / "bin" / b, dest):
+            fixed.append(f"bin/{b}")
+        elif acpype_bin and _copy_if_missing(acpype_bin / b, dest):
+            fixed.append(f"bin/{b}")
+
     # 恢复 bin/teLeap
     for b in _AMBER_BIN:
         dest = ah / "bin" / b
@@ -166,7 +176,7 @@ def repair_ambertools() -> list[str]:
         elif acpype_bin and _copy_if_missing(acpype_bin / b, dest):
             fixed.append(f"bin/{b}")
 
-    # 完整同步 wrapped_progs/（antechamber 依赖 bondtype、atomtype 等全部成员）
+    # 完整同步 wrapped_progs/
     dest_wp = ah / "bin" / "wrapped_progs"
     if pkg:
         fixed.extend(_sync_dir_missing(

@@ -110,10 +110,10 @@ tar xzf gromacs_md_*.tar.gz -C md_run && cd md_run
 bash run_md.sh
 ```
 
-可通过环境变量调整：
+可通过环境变量指定 GROMACS 可执行文件：
 
 ```bash
-GMX=gmx_mpi NTOMP=8 bash run_md.sh
+GMX=/usr/local/gromacs/bin/gmx bash run_md.sh
 ```
 
 ## API

@@ -5,11 +5,13 @@
   const mol2Input = document.getElementById("mol2-file");
   const pdbName = document.getElementById("pdb-name");
   const mol2Name = document.getElementById("mol2-name");
-  const cyclicChk = document.getElementById("is-cyclic-peptide");
-  const cyclicInput = document.getElementById("cyclic-peptide-file");
-  const cyclicName = document.getElementById("cyclic-peptide-name");
+  const ligandTypeSel = document.getElementById("ligand-type");
+  const ligandTypeHint = document.getElementById("ligand-type-hint");
+  const peptideInput = document.getElementById("peptide-file");
+  const peptideName = document.getElementById("peptide-file-name");
+  const peptideLabel = document.getElementById("peptide-file-label");
   const mol2Group = document.getElementById("ligand-mol2-group");
-  const cyclicGroup = document.getElementById("ligand-cyclic-group");
+  const peptideGroup = document.getElementById("ligand-peptide-group");
   const mol2Actions = document.getElementById("ligand-mol2-actions");
   const uploadSubtitle = document.getElementById("upload-subtitle");
 
@@ -74,42 +76,74 @@
     updatePreview();
   });
 
-  if (cyclicInput) {
-    cyclicInput.addEventListener("change", function () {
-      if (cyclicName) {
-        cyclicName.textContent = this.files[0] ? this.files[0].name : "未选择文件";
-        cyclicName.classList.toggle("has-file", !!this.files[0]);
+  if (peptideInput) {
+    peptideInput.addEventListener("change", function () {
+      if (peptideName) {
+        peptideName.textContent = this.files[0] ? this.files[0].name : "未选择文件";
+        peptideName.classList.toggle("has-file", !!this.files[0]);
       }
       updateSubmitButton();
       updatePreview();
     });
   }
 
-  function isCyclicMode() {
-    return !!(cyclicChk && cyclicChk.checked);
+  function getLigandType() {
+    return ligandTypeSel ? ligandTypeSel.value : "mol2";
   }
 
-  function syncCyclicUi() {
-    var on = isCyclicMode();
-    if (mol2Group) mol2Group.classList.toggle("hidden", on);
-    if (cyclicGroup) cyclicGroup.classList.toggle("hidden", !on);
-    if (mol2Actions) mol2Actions.classList.toggle("hidden", on);
+  function isPeptideMode() {
+    var t = getLigandType();
+    return t === "cyclic" || t === "linear";
+  }
+
+  function isCyclicMode() {
+    return getLigandType() === "cyclic";
+  }
+
+  function syncLigandTypeUi() {
+    var t = getLigandType();
+    var pep = t === "cyclic" || t === "linear";
+    if (mol2Group) mol2Group.classList.toggle("hidden", pep);
+    if (peptideGroup) peptideGroup.classList.toggle("hidden", !pep);
+    if (mol2Actions) mol2Actions.classList.toggle("hidden", pep);
+    if (peptideLabel) {
+      peptideLabel.textContent = t === "linear" ? "线形肽 · PDB" : "环肽 · PDB";
+    }
     if (uploadSubtitle) {
-      uploadSubtitle.textContent = on
-        ? "蛋白 PDB + 环肽 PDB（标准氨基酸，头尾成环；请预先摆好相对位置）"
-        : "蛋白 PDB 必填；配体 MOL2 至少 1 个，最多 3 个（请在外部软件中摆好相对位置）";
+      if (t === "cyclic") {
+        uploadSubtitle.textContent =
+          "蛋白 PDB + 环肽 PDB（标准氨基酸，头尾成环；请预先摆好相对位置）";
+      } else if (t === "linear") {
+        uploadSubtitle.textContent =
+          "蛋白 PDB + 线形肽 PDB（标准氨基酸，保留 N/C 末端；请预先摆好相对位置）";
+      } else {
+        uploadSubtitle.textContent =
+          "蛋白 PDB 必填；配体 MOL2 至少 1 个，最多 3 个（请在外部软件中摆好相对位置）";
+      }
+    }
+    if (ligandTypeHint) {
+      if (t === "cyclic") {
+        ligandTypeHint.textContent =
+          "请上传仅含环肽的 PDB（勿用 MOL2、勿含受体）。ff14SB + 自动连接首尾 N–C；暂不支持侧链杂原子修饰。";
+      } else if (t === "linear") {
+        ligandTypeHint.textContent =
+          "请上传仅含线形肽的 PDB（勿用 MOL2、勿含受体）。ff14SB，保留 N/C 末端，不成环；暂不支持非标准氨基酸。";
+      } else {
+        ligandTypeHint.textContent =
+          "小分子请上传 MOL2；肽类请上传仅含肽链的 PDB（标准氨基酸，勿含受体蛋白）。";
+      }
     }
     var addH = document.getElementById("ligand-add-h");
     if (addH) {
-      addH.disabled = on;
-      if (on) addH.checked = false;
+      addH.disabled = pep;
+      if (pep) addH.checked = false;
     }
     updateSubmitButton();
     updatePreview();
   }
 
-  if (cyclicChk) {
-    cyclicChk.addEventListener("change", syncCyclicUi);
+  if (ligandTypeSel) {
+    ligandTypeSel.addEventListener("change", syncLigandTypeUi);
   }
 
   window.WebMD = window.WebMD || {};
@@ -127,9 +161,14 @@
 
   function updatePreview() {
     if (!window.MdViewer) return;
-    if (isCyclicMode()) {
-      if (pdbInput.files[0] && cyclicInput && cyclicInput.files[0] && window.MdViewer.loadFromPdbs) {
-        window.MdViewer.loadFromPdbs(pdbInput.files[0], cyclicInput.files[0]);
+    if (isPeptideMode()) {
+      if (
+        pdbInput.files[0] &&
+        peptideInput &&
+        peptideInput.files[0] &&
+        window.MdViewer.loadFromPdbs
+      ) {
+        window.MdViewer.loadFromPdbs(pdbInput.files[0], peptideInput.files[0]);
       } else {
         window.MdViewer.hide();
       }
@@ -145,8 +184,8 @@
 
   function updateSubmitButton() {
     var ready;
-    if (isCyclicMode()) {
-      ready = !!(pdbInput.files[0] && cyclicInput && cyclicInput.files[0]);
+    if (isPeptideMode()) {
+      ready = !!(pdbInput.files[0] && peptideInput && peptideInput.files[0]);
     } else {
       ready = !!(pdbInput.files[0] && getMol2Files().length > 0);
     }
@@ -156,8 +195,10 @@
       submitHint.textContent = "请先登录后再提交";
     } else if (ready) {
       submitHint.textContent = "文件已就绪，点击提交";
-    } else if (isCyclicMode()) {
+    } else if (getLigandType() === "cyclic") {
       submitHint.textContent = "请先上传蛋白 PDB 与环肽 PDB";
+    } else if (getLigandType() === "linear") {
+      submitHint.textContent = "请先上传蛋白 PDB 与线形肽 PDB";
     } else {
       submitHint.textContent = "请先上传 PDB 与至少一个 MOL2";
     }
@@ -183,13 +224,15 @@
       report_interval_ps: parseFloat(document.getElementById("report-interval").value),
       ligand_add_hydrogens: document.getElementById("ligand-add-h") &&
         document.getElementById("ligand-add-h").checked ? "1" : "0",
-      is_cyclic_peptide: isCyclicMode() ? "1" : "0",
+      ligand_type: getLigandType(),
+      is_cyclic_peptide: getLigandType() === "cyclic" ? "1" : "0",
+      is_linear_peptide: getLigandType() === "linear" ? "1" : "0",
     };
   }
 
   btnSubmit.addEventListener("click", async function () {
-    if (isCyclicMode()) {
-      if (!pdbInput.files[0] || !cyclicInput || !cyclicInput.files[0]) return;
+    if (isPeptideMode()) {
+      if (!pdbInput.files[0] || !peptideInput || !peptideInput.files[0]) return;
     } else if (!pdbInput.files[0] || !getMol2Files().length) {
       return;
     }
@@ -210,8 +253,9 @@
 
     var formData = new FormData();
     formData.append("pdb_file", pdbInput.files[0]);
-    if (isCyclicMode()) {
-      formData.append("cyclic_peptide_file", cyclicInput.files[0]);
+    if (isPeptideMode()) {
+      // 后端字段名沿用 cyclic_peptide_file，线形/环肽共用上传槽
+      formData.append("cyclic_peptide_file", peptideInput.files[0]);
     } else if (window.WebMD && window.WebMD.appendMol2ToFormData) {
       window.WebMD.appendMol2ToFormData(formData);
     } else {
@@ -260,6 +304,7 @@
           pending: 5,
           processing_protein: 15,
           processing_ligand: 30,
+          awaiting_charge_confirm: 35,
           solvating: 50,
           converting_gmx: 70,
           generating_mdp: 85,
@@ -268,9 +313,16 @@
         };
         progressFill.style.width = (progressMap[task.status] || 0) + "%";
 
+        if (task.status === "awaiting_charge_confirm") {
+          clearInterval(interval);
+          showChargeConfirmModal(taskId, task);
+          return;
+        }
+
         if (task.status === "completed") {
           clearInterval(interval);
           sectionDownload.classList.remove("hidden");
+          renderLigandFfSummary(task);
           if (window.MdViewer && (!window.MdViewer.hasLocalPreview || !window.MdViewer.hasLocalPreview())) {
             window.MdViewer.load(taskId);
           }
@@ -344,7 +396,134 @@
     errorMsg.textContent = msg;
   }
 
+  function renderLigandFfSummary(task) {
+    var box = document.getElementById("ligand-ff-summary");
+    if (!box) return;
+    var ligs = task.ligands_ff || (task.params && task.params.ligands) || [];
+    var lt = (task.params && task.params.ligand_type) || "";
+    var isCyc =
+      lt === "cyclic" || !!(task.params && task.params.is_cyclic_peptide);
+    var isLin =
+      lt === "linear" || !!(task.params && task.params.is_linear_peptide);
+    if (!ligs.length || isCyc || isLin) {
+      if (isCyc) {
+        box.innerHTML =
+          "<h4>力场说明</h4><p>环肽：Amber <strong>ff14SB</strong>（头尾 N–C 成环）；蛋白同为 ff14SB。</p>";
+        box.classList.remove("hidden");
+      } else if (isLin) {
+        box.innerHTML =
+          "<h4>力场说明</h4><p>线形肽：Amber <strong>ff14SB</strong>（保留 N/C 末端，不成环）；蛋白同为 ff14SB。</p>";
+        box.classList.remove("hidden");
+      } else {
+        box.classList.add("hidden");
+      }
+      return;
+    }
+    var items = ligs.map(function (L) {
+      var nc = L.net_charge != null ? L.net_charge : "—";
+      return (
+        "<li><strong>" +
+        (L.resname || "LIG") +
+        "</strong>（" +
+        (L.source || "") +
+        "）：净电荷 <strong>" +
+        nc +
+        "</strong> · 力场 " +
+        (L.force_field || "GAFF2") +
+        " · 电荷方法 " +
+        (L.charge_method || "AM1-BCC") +
+        "</li>"
+      );
+    });
+    box.innerHTML =
+      "<h4>小分子力场参数</h4><ul>" +
+      items.join("") +
+      "</ul><p class=\"hint\">以上设置已写入结果包中的 ligand_forcefield_summary.json</p>";
+    box.classList.remove("hidden");
+  }
+
+  var chargeModal = document.getElementById("charge-confirm-modal");
+  var chargeMsg = document.getElementById("charge-confirm-msg");
+  var chargeSelect = document.getElementById("charge-confirm-select");
+  var chargeErr = document.getElementById("charge-confirm-error");
+  var pendingChargeTaskId = null;
+  var pendingChargeLigIndex = 1;
+
+  function hideChargeConfirmModal() {
+    if (chargeModal) chargeModal.classList.add("hidden");
+    if (chargeErr) {
+      chargeErr.textContent = "";
+      chargeErr.classList.add("hidden");
+    }
+  }
+
+  function showChargeConfirmModal(taskId, task) {
+    var info = task.charge_confirm || {};
+    pendingChargeTaskId = taskId;
+    pendingChargeLigIndex = info.ligand_index || 1;
+    if (chargeMsg) {
+      chargeMsg.textContent =
+        info.message ||
+        "原电荷计算失败，请选择一个可行净电荷后继续。";
+    }
+    if (chargeSelect) {
+      chargeSelect.innerHTML = "";
+      var opts = info.working_charges || [];
+      if (!opts.length) opts = [0];
+      opts.forEach(function (q) {
+        var o = document.createElement("option");
+        o.value = String(q);
+        o.textContent = String(q);
+        chargeSelect.appendChild(o);
+      });
+    }
+    if (chargeModal) chargeModal.classList.remove("hidden");
+    progressText.textContent = "等待确认配体净电荷";
+  }
+
+  var btnChargeOk = document.getElementById("charge-confirm-ok");
+  var btnChargeCancel = document.getElementById("charge-confirm-cancel");
+  if (btnChargeOk) {
+    btnChargeOk.addEventListener("click", async function () {
+      if (!pendingChargeTaskId || !chargeSelect) return;
+      try {
+        if (chargeErr) chargeErr.classList.add("hidden");
+        var resp = await apiFetch(
+          "/api/tasks/" + pendingChargeTaskId + "/confirm-charge",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ligand_index: pendingChargeLigIndex,
+              charge: parseInt(chargeSelect.value, 10),
+            }),
+          }
+        );
+        if (!resp.ok) {
+          var err = await resp.json();
+          throw new Error(err.detail || "确认失败");
+        }
+        hideChargeConfirmModal();
+        progressArea.classList.remove("hidden");
+        progressText.textContent = "已确认净电荷，继续构建…";
+        pollTask(pendingChargeTaskId);
+      } catch (e) {
+        if (chargeErr) {
+          chargeErr.textContent = e.message || String(e);
+          chargeErr.classList.remove("hidden");
+        }
+      }
+    });
+  }
+  if (btnChargeCancel) {
+    btnChargeCancel.addEventListener("click", function () {
+      hideChargeConfirmModal();
+      btnSubmit.disabled = false;
+      btnSubmit.textContent = "重新提交";
+    });
+  }
+
   window.addEventListener("storage", updateSubmitButton);
   setInterval(updateSubmitButton, 2000);
-  syncCyclicUi();
+  syncLigandTypeUi();
 })();

@@ -28,6 +28,7 @@ class TaskStatus(str, enum.Enum):
     PENDING = "pending"
     PROCESSING_PROTEIN = "processing_protein"
     PROCESSING_LIGAND = "processing_ligand"
+    AWAITING_CHARGE_CONFIRM = "awaiting_charge_confirm"
     SOLVATING = "solvating"
     CONVERTING_GMX = "converting_gmx"
     GENERATING_MDP = "generating_mdp"
@@ -41,6 +42,7 @@ class TaskStatus(str, enum.Enum):
             TaskStatus.PENDING: "等待开始",
             TaskStatus.PROCESSING_PROTEIN: "修复蛋白 (PDBFixer)",
             TaskStatus.PROCESSING_LIGAND: "小分子 GAFF2 参数化 (antechamber)",
+            TaskStatus.AWAITING_CHARGE_CONFIRM: "等待确认配体净电荷",
             TaskStatus.SOLVATING: "构建溶剂化体系 (tleap)",
             TaskStatus.CONVERTING_GMX: "转换为 GROMACS 拓扑 (acpype)",
             TaskStatus.GENERATING_MDP: "生成 GROMACS mdp 文件",
@@ -98,6 +100,9 @@ class Task:
             "payment_claimed_at": self.payment_claimed_at,
             "md_status": self.md_status,
             "atom_count": self.atom_count,
+            # 净电荷确认弹窗所需字段（若有）
+            "charge_confirm": self.params.get("charge_confirm"),
+            "ligands_ff": self.params.get("ligands"),
         }
 
     def to_public_dict(self) -> dict:

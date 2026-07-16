@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260716a">
+<link rel="stylesheet" href="/css/style.css?v=20260716f">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -235,11 +235,15 @@
         <p class="card-subtitle" id="upload-subtitle">蛋白 PDB 必填；配体 MOL2 至少 1 个，最多 3 个（请在外部软件中摆好相对位置）</p>
       </div>
     </div>
-    <label class="checkbox-inline cyclic-peptide-toggle" for="is-cyclic-peptide">
-      <input type="checkbox" id="is-cyclic-peptide">
-      <span>配体为环肽（标准氨基酸，头尾成环）</span>
-    </label>
-    <p class="hint" id="cyclic-peptide-hint">勾选后请单独上传环肽 PDB（勿用 MOL2）。系统使用 ff14SB 力场并自动连接首尾 N–C 肽键；暂不支持侧链杂原子修饰。</p>
+    <div class="form-group ligand-type-group">
+      <label for="ligand-type">配体类型</label>
+      <select id="ligand-type">
+        <option value="mol2" selected>小分子（MOL2，GAFF2）</option>
+        <option value="cyclic">环肽（PDB，ff14SB，头尾成环）</option>
+        <option value="linear">线形肽（PDB，ff14SB，保留末端）</option>
+      </select>
+    </div>
+    <p class="hint" id="ligand-type-hint">小分子请上传 MOL2；肽类请上传仅含肽链的 PDB（标准氨基酸，勿含受体蛋白）。</p>
     <div class="form-row">
       <div class="form-group">
         <label for="pdb-file">蛋白 PDB 文件</label>
@@ -261,13 +265,13 @@
           </div>
         </div>
       </div>
-      <div class="form-group ligand-upload-primary hidden" id="ligand-cyclic-group">
-        <label for="cyclic-peptide-file"><span class="ligand-color-dot ligand-dot-1"></span>环肽 · PDB</label>
+      <div class="form-group ligand-upload-primary hidden" id="ligand-peptide-group">
+        <label for="peptide-file"><span class="ligand-color-dot ligand-dot-1"></span><span id="peptide-file-label">肽 · PDB</span></label>
         <div class="file-input-wrapper">
           <div class="file-input-zone">
             <span class="file-input-btn">选取文件</span>
-            <span class="file-name" id="cyclic-peptide-name">未选择文件</span>
-            <input type="file" id="cyclic-peptide-file" accept=".pdb" class="file-input-native">
+            <span class="file-name" id="peptide-file-name">未选择文件</span>
+            <input type="file" id="peptide-file" accept=".pdb" class="file-input-native">
           </div>
         </div>
       </div>
@@ -442,6 +446,7 @@
         <p class="card-subtitle">获取 tar.gz 模拟文件包</p>
       </div>
     </div>
+    <div id="ligand-ff-summary" class="ligand-ff-summary hidden" aria-live="polite"></div>
     <div class="download-actions">
       <button type="button" id="btn-pay-download" class="btn btn-primary hidden">支付并启动模拟</button>
       <button type="button" id="btn-download" class="btn btn-success hidden">下载模拟文件包 (tar.gz)</button>
@@ -911,6 +916,21 @@
 
 </div>
 
+<div id="charge-confirm-modal" class="payment-modal hidden" role="dialog" aria-modal="true" aria-labelledby="charge-confirm-title">
+  <div class="payment-modal-backdrop" id="charge-confirm-backdrop"></div>
+  <div class="payment-modal-panel">
+    <h3 id="charge-confirm-title">确认配体净电荷</h3>
+    <p id="charge-confirm-msg" class="payment-amount-hint"></p>
+    <label class="auth-label" for="charge-confirm-select">采用净电荷</label>
+    <select id="charge-confirm-select" class="payment-payer-note"></select>
+    <div class="payment-modal-actions">
+      <button type="button" class="btn btn-primary" id="charge-confirm-ok">采用并继续</button>
+      <button type="button" class="btn btn-secondary" id="charge-confirm-cancel">取消</button>
+    </div>
+    <p class="payment-error hidden" id="charge-confirm-error"></p>
+  </div>
+</div>
+
 <div id="auth-modal" class="payment-modal hidden" role="dialog" aria-modal="true">
   <div class="payment-modal-backdrop" id="auth-modal-backdrop"></div>
   <div class="payment-modal-panel auth-modal-panel">
@@ -977,10 +997,10 @@
 <script src="/js/auth.js"></script>
 <script src="/js/main_tabs.js?v=20260714"></script>
 <script src="/js/ngl.js"></script>
-<script src="/js/viewer.js?v=20260716a"></script>
+<script src="/js/viewer.js?v=20260716e"></script>
 <script src="/js/payment.js"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
-<script src="/js/app.js?v=20260716a"></script>
+<script src="/js/app.js?v=20260716f"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 # ==================================================
-# 功能说明：标准氨基酸头尾环肽的 PDB 校验、清理与 tleap 序列准备
-# 使用方法：由 pipeline 调用 prepare_cyclic_peptide(pdb_path, work_dir)
+# 功能说明：标准氨基酸环肽/线形肽的 PDB 校验、清理与 tleap 准备
+# 使用方法：pipeline 调用 prepare_cyclic_peptide / prepare_linear_peptide
 # 依赖环境：Python 标准库；组氨酸命名复用 protein._fix_histidine_protonation
 # 生成时间：2026-07-16
 # ==================================================
@@ -154,5 +154,77 @@ def prepare_cyclic_peptide(pdb_path: str, work_dir: str) -> dict:
     logger.info(
         "环肽已准备: %d 残基, 残基号 %d–%d, 序列=%s",
         n_res, resid_start, resid_end, " ".join(seq_names),
+    )
+    return meta
+
+
+def prepare_linear_peptide(pdb_path: str, work_dir: str) -> dict:
+    """校验并清理线形肽 PDB，保留 N/C 末端，返回元数据。
+
+    与环肽区别：不去掉 OXT/N 端多余质子；tleap 用 loadpdb 自动识别末端。
+    仅支持标准氨基酸；残基号重排为 9001 起以便分析选组。
+    """
+    src = Path(pdb_path)
+    work = Path(work_dir)
+    if not src.is_file():
+        raise FileNotFoundError(f"线形肽 PDB 不存在: {pdb_path}")
+
+    residues = _parse_residues(src)
+    if len(residues) < 2:
+        raise ValueError("线形肽至少需要 2 个氨基酸残基")
+
+    bad = sorted({r["resname"] for r in residues if r["resname"] not in _STD_AA})
+    if bad:
+        raise ValueError(
+            "线形肽含非标准残基（当前仅支持标准氨基酸）: " + ", ".join(bad)
+        )
+
+    n_res = len(residues)
+    resid_start = _CYC_RESID_START
+    resid_end = resid_start + n_res - 1
+    out_lines: list[str] = []
+
+    for i, res in enumerate(residues):
+        new_num = resid_start + i
+        rn = res["resname"]
+        for ln in res["lines"]:
+            # 保留末端原子；仅统一链号与残基号
+            ln = ln[:17] + f"{rn:<3s}" + "C" + f"{new_num:4d}" + ln[26:]
+            if ln.startswith("HETATM"):
+                ln = "ATOM  " + ln[6:]
+            out_lines.append(ln.rstrip("\n") + "\n")
+
+    out_lines.append("END\n")
+    clean_path = work / "linear_peptide_clean.pdb"
+    clean_path.write_text("".join(out_lines), encoding="utf-8")
+
+    _fix_histidine_protonation(str(clean_path))
+
+    residues2 = _parse_residues(clean_path)
+    seq_names = [r["resname"] for r in residues2]
+    if any(r not in _STD_AA for r in seq_names):
+        raise ValueError("线形肽组氨酸处理后仍存在非标准残基名")
+
+    meta = {
+        "type": "linear_peptide",
+        "source": src.name,
+        "clean_pdb": str(clean_path),
+        "n_residues": n_res,
+        "resid_start": resid_start,
+        "resid_end": resid_end,
+        "chain": "C",
+        "sequence": seq_names,
+    }
+    meta_path = work / META_NAME
+    meta_path.write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    logger.info(
+        "线形肽已准备: %d 残基, 残基号 %d–%d, 序列=%s",
+        n_res,
+        resid_start,
+        resid_end,
+        " ".join(seq_names),
     )
     return meta

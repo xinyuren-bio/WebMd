@@ -64,6 +64,40 @@ body {
   border-bottom: 1px solid var(--color-border);
 }
 
+.ligand-ff-summary {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  background: #f4faf8;
+  border: 1px solid #d0e8e2;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: #134e4a;
+}
+
+.ligand-ff-summary h4 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.ligand-ff-summary ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.ligand-type-group {
+  margin: 0.75rem 0 0.35rem;
+  max-width: 28rem;
+}
+
+.ligand-type-group select {
+  width: 100%;
+}
+
+#ligand-type-hint {
+  margin: 0 0 0.85rem;
+}
+
 .cyclic-peptide-toggle {
   display: flex;
   align-items: center;

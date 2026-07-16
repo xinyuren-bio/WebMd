@@ -153,6 +153,23 @@ saveamberparm complex {prmtop} {inpcrd}
 quit
 """
 
+# 标准氨基酸线形肽：ff14SB + loadpdb（保留 N/C 末端，不成环）
+TLEAP_TEMPLATE_LINEAR = """\
+source leaprc.protein.ff14SB
+source leaprc.water.tip3p
+
+prot = loadpdb {protein_pdb}
+pep = loadpdb {peptide_pdb}
+
+complex = combine {{ prot pep }}
+solvatebox complex TIP3PBOX {box_padding}
+addions complex Cl- 0
+addions complex {cation} 0
+{salt_line}
+saveamberparm complex {prmtop} {inpcrd}
+quit
+"""
+
 
 def _normalize_salt_type(salt_type: str) -> str:
     """规范化盐种类为 nacl/kcl；未知值回退 nacl。"""
@@ -403,8 +420,179 @@ def build_full_system_cyclic(
     tleap_in.write_text(script, encoding="utf-8")
     logger.info("tleap 环肽脚本:\n%s", script)
     _run_tleap(work, tleap_in, prmtop, inpcrd)
+    _verify_cyclic_peptide_bond(work, cyclic_meta, prmtop, inpcrd)
     logger.info("Amber 环肽体系构建完成: %s, %s", prmtop.name, inpcrd.name)
     return str(prmtop), str(inpcrd)
+
+
+def build_full_system_linear(
+    protein_pdb: str,
+    peptide_meta: dict,
+    work_dir: str,
+    box_padding: float = 10.0,
+    ion_conc: float = 0.15,
+    salt_type: str = "nacl",
+) -> tuple[str, str]:
+    """用 ff14SB 构建蛋白 + 线形肽溶剂化体系（保留末端，不成环）。"""
+    work = Path(work_dir)
+    clean_pdb = _clean_pdb_for_tleap(protein_pdb, str(work / "protein_clean.pdb"))
+    pep_src = Path(peptide_meta["clean_pdb"]).resolve()
+    pep_name = "linear_peptide.pdb"
+    pep_dst = work / pep_name
+    if pep_src != pep_dst.resolve():
+        shutil.copy(str(pep_src), str(pep_dst))
+
+    cation, salt_line = _salt_line_for(
+        salt_type, ion_conc, str(clean_pdb), [str(pep_dst)], box_padding,
+    )
+    prmtop = work / "system.prmtop"
+    inpcrd = work / "system.inpcrd"
+    tleap_in = work / "tleap.in"
+    script = TLEAP_TEMPLATE_LINEAR.format(
+        protein_pdb=Path(clean_pdb).name,
+        peptide_pdb=pep_name,
+        box_padding=box_padding,
+        cation=cation,
+        salt_line=salt_line,
+        prmtop=prmtop.name,
+        inpcrd=inpcrd.name,
+    )
+    tleap_in.write_text(script, encoding="utf-8")
+    logger.info("tleap 线形肽脚本:\n%s", script)
+    _run_tleap(work, tleap_in, prmtop, inpcrd)
+    logger.info("Amber 线形肽体系构建完成: %s, %s", prmtop.name, inpcrd.name)
+    return str(prmtop), str(inpcrd)
+
+
+def _verify_cyclic_peptide_bond(
+    work: Path,
+    cyclic_meta: dict,
+    prmtop: Path,
+    inpcrd: Path,
+) -> None:
+    """验证头尾环肽共价键已写入拓扑，且末端无错误 OXT/多余质子。"""
+    resid_a = int(cyclic_meta["resid_start"])
+    resid_b = int(cyclic_meta["resid_end"])
+    leap_log = work / "leap.log"
+    if leap_log.is_file():
+        log_txt = leap_log.read_text(encoding="utf-8", errors="replace")
+        if "FATAL" in log_txt.upper() and "BOND" in log_txt.upper():
+            raise RuntimeError("环肽成环失败：tleap 报告键连接错误，请检查首尾几何。")
+
+    # 优先 ParmEd 检查拓扑中是否存在 N–C 键
+    try:
+        import parmed as pmd
+
+        parm = pmd.load_file(str(prmtop), str(inpcrd))
+        n_atom = None
+        c_atom = None
+        for res in parm.residues:
+            if res.number == resid_a or int(getattr(res, "idx", -1) + 1) == 1:
+                pass
+            # Amber/ParmEd 残基号可能保留 PDB 编号
+            rnum = int(res.number)
+            if rnum == resid_a:
+                for a in res.atoms:
+                    if a.name.strip() == "N":
+                        n_atom = a
+                    if a.name.strip() in {"H2", "H3", "H1"}:
+                        # 链中 N 端不应残留 H2/H3；H1 已在清理时改名，若仍在则告警
+                        if a.name.strip() in {"H2", "H3"}:
+                            raise RuntimeError(
+                                "环肽成环验证失败：N 端仍有多余质子，可能未正确闭环。"
+                            )
+            if rnum == resid_b:
+                for a in res.atoms:
+                    if a.name.strip() == "C":
+                        c_atom = a
+                    if a.name.strip() in {"OXT", "O2", "OT2"}:
+                        raise RuntimeError(
+                            "环肽成环验证失败：C 端仍有 OXT 等末端原子，可能未正确闭环。"
+                        )
+
+        if n_atom is None or c_atom is None:
+            # 回退：按残基序列首尾
+            cyc_res = [r for r in parm.residues if resid_a <= int(r.number) <= resid_b]
+            if len(cyc_res) < 2:
+                cyc_res = list(parm.residues)[-int(cyclic_meta["n_residues"]):]
+            if len(cyc_res) < 2:
+                raise RuntimeError("环肽成环验证失败：拓扑中找不到环肽残基。")
+            for a in cyc_res[0].atoms:
+                if a.name.strip() == "N":
+                    n_atom = a
+            for a in cyc_res[-1].atoms:
+                if a.name.strip() == "C":
+                    c_atom = a
+                if a.name.strip() in {"OXT", "O2", "OT2"}:
+                    raise RuntimeError(
+                        "环肽成环验证失败：C 端仍有末端氧原子，请检查结构。"
+                    )
+
+        if n_atom is None or c_atom is None:
+            raise RuntimeError("环肽成环验证失败：找不到首尾 N/C 原子。")
+
+        bonded = False
+        for b in n_atom.bonds:
+            if c_atom in (b.atom1, b.atom2):
+                bonded = True
+                break
+        if not bonded:
+            # 键列表遍历兜底
+            for b in parm.bonds:
+                ids = {b.atom1.idx, b.atom2.idx}
+                if n_atom.idx in ids and c_atom.idx in ids:
+                    bonded = True
+                    break
+        if not bonded:
+            raise RuntimeError(
+                "环肽成环验证失败：拓扑中不存在首尾 N–C 共价键，未生成真正闭环。"
+            )
+
+        # 重复原子名检查（同残基内）
+        for res in parm.residues:
+            rnum = int(res.number)
+            if not (resid_a <= rnum <= resid_b):
+                continue
+            names = [a.name.strip() for a in res.atoms]
+            if len(names) != len(set(names)):
+                raise RuntimeError(
+                    f"环肽成环验证失败：残基 {rnum} 存在重复原子名。"
+                )
+        logger.info("环肽成环验证通过：残基 %d.N — %d.C 已成键", resid_a, resid_b)
+        return
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.warning("ParmEd 环肽验证不可用，改用坐标距离检查: %s", e)
+
+    # 回退：检查清理后 PDB 首尾 N–C 距离应可成键（< 2.0 Å）
+    cyc_pdb = work / "cyclic_peptide.pdb"
+    if not cyc_pdb.is_file():
+        raise RuntimeError("环肽成环验证失败：缺少环肽坐标文件。")
+    n_xyz = None
+    c_xyz = None
+    for ln in cyc_pdb.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not ln.startswith("ATOM"):
+            continue
+        rn = int(ln[22:26])
+        an = ln[12:16].strip()
+        xyz = (float(ln[30:38]), float(ln[38:46]), float(ln[46:54]))
+        if rn == resid_a and an == "N":
+            n_xyz = xyz
+        if rn == resid_b and an == "C":
+            c_xyz = xyz
+        if rn == resid_b and an in {"OXT", "O2", "OT2"}:
+            raise RuntimeError("环肽成环验证失败：结构中仍含 C 端 OXT。")
+    if n_xyz is None or c_xyz is None:
+        raise RuntimeError("环肽成环验证失败：找不到首尾 N/C 坐标。")
+    import math
+
+    d = math.sqrt(sum((a - b) ** 2 for a, b in zip(n_xyz, c_xyz)))
+    if d > 2.0:
+        raise RuntimeError(
+            f"环肽成环验证失败：首尾 N–C 距离 {d:.2f} Å 过大，请调整几何后再上传。"
+        )
+    logger.info("环肽成环距离检查通过：N–C = %.3f Å（拓扑详检不可用）", d)
 
 
 def build_full_system(

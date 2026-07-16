@@ -16,18 +16,37 @@
     .admin-empty { color: #666; padding: 2rem 0; text-align: center; }
     .admin-msg { margin-top: 1rem; color: #c0392b; }
     .admin-msg.ok { color: #27ae60; }
+    .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 1.5rem; }
+    .stat-card { background: #f5f7fa; border: 1px solid #e8ecf0; border-radius: 8px; padding: 14px 16px; }
+    .stat-card .label { font-size: 0.8125rem; color: #666; margin-bottom: 4px; }
+    .stat-card .value { font-size: 1.75rem; font-weight: 800; color: var(--color-primary, #1a6b5c); }
+    .admin-section-title { font-size: 1rem; margin: 1.5rem 0 0.75rem; }
+    .admin-md-card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; background: #fafbfc; }
+    .admin-md-card p { margin: 0 0 8px; font-size: 0.875rem; }
+    .admin-ssh-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .admin-ssh-row .ssh-cmd { flex: 1; min-width: 220px; }
+    .admin-ssh-row .ssh-pwd { width: 140px; }
+    .admin-ssh-row .ssh-server-id { width: 160px; }
   </style>
 </head>
 <body>
   <div class="admin-page">
     <h1>支付核实</h1>
     <p class="hint">核对支付宝到账记录后，批准对应任务下载。密钥通过服务器环境变量 <code>WEBMD_ADMIN_KEY</code> 配置。</p>
+    <p class="admin-nav" style="margin-bottom:1rem;font-size:0.875rem;"><a href="/stats.html">访问统计 →</a></p>
     <div class="admin-key-row">
       <input type="password" id="admin-key" placeholder="管理员密钥" autocomplete="off">
-      <button type="button" class="btn btn-primary" id="btn-load">刷新待核实列表</button>
+      <button type="button" class="btn btn-primary" id="btn-load">刷新数据</button>
     </div>
+    <div id="user-stats"></div>
+    <h2 class="admin-section-title">待核实支付</h2>
     <div id="admin-content">
       <p class="admin-empty">请输入密钥并刷新列表</p>
+    </div>
+    <h2 class="admin-section-title">MD 任务队列（AutoDL）</h2>
+    <p class="hint" style="margin-bottom:0.75rem;">核实通过后会邮件通知您开机；请为每个任务填写 <strong>AutoDL 实例 ID</strong>、SSH 与密码，保存后自动上传并跑 MD。完成后邮件会再次发送实例 ID，便于关机。</p>
+    <div id="md-queue-content">
+      <p class="admin-empty">请输入密钥并刷新</p>
     </div>
     <p class="admin-msg hidden" id="admin-msg"></p>
   </div>

@@ -1,175 +1,66 @@
 # ==================================================
-# 功能说明：使用 antechamber + parmchk2 为配体生成 GAFF2 力场参数
-# 使用方法：由 pipeline 调用 parameterize_ligand(mol2_path, work_dir)
-# 依赖环境：AmberTools (antechamber, parmchk2); pip install rdkit; Open Babel 可选
-# 生成时间：2026-07-14
+# 功能说明：antechamber + parmchk2 生成 GAFF2；净电荷须用户确认或高置信检测
+# 使用方法：由 pipeline 调用 parameterize_ligands(...)
+# 依赖环境：AmberTools；pip install rdkit；Open Babel 可选
+# 生成时间：2026-07-16
 # ==================================================
 
+from __future__ import annotations
+
+import json
 import logging
+import math
 import re
 import shutil
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from rdkit import Chem
-from rdkit.Chem import rdmolops
 
 from .env_check import check_external_tools, repair_ambertools, source_amber_env
+from .ligand_charge import (
+    ChargeConfirmNeeded,
+    ChargeConfirmRequest,
+    detect_ligand_charge,
+    pick_initial_charge,
+    probe_working_charges,
+)
+
+# 常见不支持作为小分子 GAFF2 参数化的金属元素
+_UNSUPPORTED_METALS = frozenset({
+    "FE", "ZN", "CU", "MN", "CO", "NI", "MO", "W", "V", "CR", "CD", "HG",
+    "AG", "AU", "PT", "PD", "IR", "RH", "RU", "OS", "RE", "TC", "NB", "TA",
+})
 
 logger = logging.getLogger(__name__)
 
-
-def _charge_from_rdkit(p: str) -> int | None:
-    """RDKit 读取 mol2，从键级/价态推断形式电荷（antechamber -nc 标准做法）。"""
-    m = Chem.MolFromMol2File(
-        p, sanitize=True, removeHs=False, cleanupSubstructures=False,
-    )
-    if m is None:
-        # 部分非标准 mol2 需关闭 sanitize 后再尝试
-        m = Chem.MolFromMol2File(
-            p, sanitize=False, removeHs=False, cleanupSubstructures=False,
-        )
-        if m is None:
-            return None
-        try:
-            Chem.SanitizeMol(m)
-        except Exception:
-            pass
-    q = rdmolops.GetFormalCharge(m)
-    logger.info("配体电荷 (RDKit 形式电荷): %d", q)
-    return int(q)
+# 磷酸基 P–O 键长合理范围 (Å)
+_PO_BOND_MIN = 1.35
+_PO_BOND_MAX = 1.85
 
 
-def _charge_from_openbabel(p: str) -> int | None:
-    """Open Babel 读取 mol2 并返回分子总电荷。"""
-    try:
-        from openbabel import pybel
-    except ImportError:
-        return None
-    mol = next(pybel.readfile("mol2", p), None)
-    if mol is None:
-        return None
-    q = int(round(mol.charge))
-    logger.info("配体电荷 (Open Babel): %d", q)
-    return q
+@dataclass
+class AtomTypeFix:
+    """单条原子类型自动修复记录。"""
+
+    atom_id: int
+    atom_name: str
+    old_type: str
+    new_type: str
+    reason: str
+    confidence: str  # high | low
 
 
-def _charge_from_mol2_header(p: str) -> int | None:
-    """读取 MOL2 @<TRIPOS>MOLECULE 段中的总电荷字段（若存在）。"""
-    in_mol = False
-    with open(p, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            s = line.strip()
-            if s.startswith("@<TRIPOS>MOLECULE"):
-                in_mol = True
-                continue
-            if in_mol and s.startswith("@<TRIPOS>"):
-                break
-            if in_mol and s and not s.startswith("#"):
-                parts = s.split()
-                # 第二行格式: num_atoms num_bonds num_subst num_feat charge
-                if len(parts) >= 5 and parts[0].isdigit():
-                    try:
-                        q = int(round(float(parts[4])))
-                        logger.info("配体电荷 (MOL2 分子记录): %d", q)
-                        return q
-                    except ValueError:
-                        pass
-                break
-    return None
+@dataclass
+class SanitizeReport:
+    """MOL2 清洗报告。"""
 
-
-def _count_mol2_atoms(p: str) -> int:
-    """统计 MOL2 中原子数。"""
-    n = 0
-    in_atom = False
-    with open(p, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            s = line.strip()
-            if s.startswith("@<TRIPOS>ATOM"):
-                in_atom = True
-                continue
-            if s.startswith("@<TRIPOS>"):
-                in_atom = False
-                continue
-            if in_atom and s and not s.startswith("#"):
-                parts = s.split()
-                if parts and parts[0].isdigit():
-                    n += 1
-    return n
-
-
-def _charge_from_mol2_partial_sum(p: str) -> int | None:
-    """由 MOL2 原子部分电荷求和推断形式电荷（适用于 USER_CHARGES 全为 0 等情况）。"""
-    charges: list[float] = []
-    in_atom = False
-    with open(p, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            s = line.strip()
-            if s.startswith("@<TRIPOS>ATOM"):
-                in_atom = True
-                continue
-            if s.startswith("@<TRIPOS>"):
-                in_atom = False
-                continue
-            if in_atom and s and not s.startswith("#"):
-                parts = s.split()
-                if len(parts) >= 9:
-                    try:
-                        charges.append(float(parts[8]))
-                    except ValueError:
-                        pass
-    if not charges:
-        return None
-    total = sum(charges)
-    if all(abs(c) < 1e-6 for c in charges):
-        logger.info("配体电荷 (MOL2 部分电荷全为 0): 0")
-        return 0
-    q = int(round(total))
-    logger.info("配体电荷 (MOL2 部分电荷求和): %d", q)
-    return q
-
-
-def _charge_plausible(q: int, n_atoms: int) -> bool:
-    """判断形式电荷是否在合理范围（避免 RDKit 对异常 MOL2 给出离谱值）。"""
-    if n_atoms <= 0:
-        return False
-    # 小分子配体形式电荷通常 |q| <= 6；按原子数略放宽
-    lim = max(6, min(12, n_atoms // 5 + 2))
-    return abs(q) <= lim
-
-
-def _detect_mol2_charge(p: str) -> int:
-    """检测配体净电荷，供 antechamber -nc 使用。
-
-    优先级：MOL2 部分电荷 → MOL2 头信息 → Open Babel → RDKit（须通过合理性检查）→ 0。
-    """
-    n_atoms = _count_mol2_atoms(p)
-    candidates: list[tuple[str, int | None]] = []
-
-    for fn, name in (
-        (_charge_from_mol2_partial_sum, "MOL2 部分电荷"),
-        (_charge_from_mol2_header, "MOL2 头信息"),
-        (_charge_from_openbabel, "Open Babel"),
-        (_charge_from_rdkit, "RDKit"),
-    ):
-        try:
-            q = fn(p)
-            candidates.append((name, q))
-            if q is None:
-                continue
-            if _charge_plausible(q, n_atoms):
-                logger.info("采用 %s 电荷: %d", name, q)
-                return int(q)
-            logger.warning(
-                "%s 电荷 %d 超出合理范围（原子数 %d），尝试下一来源",
-                name, q, n_atoms,
-            )
-        except Exception as e:
-            logger.warning("%s 电荷检测失败: %s", name, e)
-
-    logger.warning("无法可靠推断配体电荷，默认使用 0（中性）")
-    return 0
+    fixes: list[AtomTypeFix] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    blocked: bool = False
+    block_message: str = ""
 
 
 def _format_mol2_atom_line(parts: list[str]) -> str:
@@ -181,64 +72,32 @@ def _format_mol2_atom_line(parts: list[str]) -> str:
     )
 
 
-def _fix_pymol_atom_type(name: str, atype: str) -> str:
-    """修复 PyMOL 导出中常见的错误 Tripos 原子类型。
-
-    例如磷原子 PA/PB 被误标为元素型 Pa/Pb（钯/铅），导致 antechamber/sqm 失败。
-    """
-    nm = (name or "").strip().upper()
-    at = (atype or "").strip()
-    # 核酸/NTP 磷原子常见命名
-    if nm in {"PA", "PB", "PG", "P", "P1", "P2", "P3"} or (
-        nm.startswith("P") and nm[1:].isdigit()
-    ):
-        if at not in {"P.3", "P.2"}:
-            return "P.3"
-    # 裸元素符号误用（Pa/Pb/Pt 等不是磷酸）
-    if at in {"Pa", "Pb", "Pt", "P"} and (
-        nm.startswith("P") or "P" in nm[:2]
-    ):
-        return "P.3"
-    return at
+def _safe_mol2_stem(name: str) -> str:
+    """将配体文件名主干清洗为仅含字母数字下划线。"""
+    s = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(name).stem).strip("_")
+    return (s or "ligand")[:80]
 
 
-def _sanitize_mol2_file(p: Path) -> list[str]:
-    """清洗 MOL2：修正错误原子类型，返回已修复项说明。"""
-    fixed: list[str] = []
-    lines_out: list[str] = []
+def _count_mol2_atoms(p: Path) -> int:
+    """统计 MOL2 原子数。"""
+    n = 0
     in_atom = False
     with p.open(encoding="utf-8", errors="replace") as f:
         for line in f:
             s = line.strip()
             if s.startswith("@<TRIPOS>ATOM"):
                 in_atom = True
-                lines_out.append(line)
                 continue
             if s.startswith("@<TRIPOS>"):
                 in_atom = False
-                lines_out.append(line)
                 continue
-            if in_atom and s and not s.startswith("#"):
-                parts = s.split()
-                if len(parts) >= 6:
-                    old = parts[5]
-                    new = _fix_pymol_atom_type(parts[1], old)
-                    if new != old:
-                        parts[5] = new
-                        fixed.append(f"{parts[1]}: {old}→{new}")
-                    # 保证字段齐全
-                    while len(parts) < 9:
-                        parts.append("0.000" if len(parts) == 8 else "1")
-                    lines_out.append(_format_mol2_atom_line(parts))
-                    continue
-            lines_out.append(line)
-    if fixed:
-        p.write_text("".join(lines_out), encoding="utf-8")
-    return fixed
+            if in_atom and s and not s.startswith("#") and s[0].isdigit():
+                n += 1
+    return n
 
 
 def _count_mol2_hydrogens(p: Path) -> int:
-    """统计 MOL2 中氢原子个数。"""
+    """统计 MOL2 中氢原子个数（按类型/元素前缀）。"""
     n = 0
     in_atom = False
     with p.open(encoding="utf-8", errors="replace") as f:
@@ -260,11 +119,340 @@ def _count_mol2_hydrogens(p: Path) -> int:
     return n
 
 
-def _add_hydrogens_mol2(src: Path, dst: Path) -> bool:
-    """为 MOL2 补氢并写出坐标（优先 Open Babel -h，其次 RDKit+obabel）。"""
-    env = source_amber_env()
+def _parse_mol2_atoms_bonds(p: Path) -> tuple[list[dict], list[tuple[int, int]]]:
+    """解析 MOL2 原子与键（用于类型修复证据）。"""
+    atoms: list[dict] = []
+    bonds: list[tuple[int, int]] = []
+    section = ""
+    with p.open(encoding="utf-8", errors="replace") as f:
+        for line in f:
+            s = line.strip()
+            if s.startswith("@<TRIPOS>"):
+                section = s
+                continue
+            if not s or s.startswith("#"):
+                continue
+            if section == "@<TRIPOS>ATOM":
+                parts = s.split()
+                if len(parts) >= 6 and parts[0].isdigit():
+                    atoms.append({
+                        "id": int(parts[0]),
+                        "name": parts[1],
+                        "x": float(parts[2]),
+                        "y": float(parts[3]),
+                        "z": float(parts[4]),
+                        "type": parts[5],
+                        "parts": parts,
+                    })
+            elif section == "@<TRIPOS>BOND":
+                parts = s.split()
+                if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+                    bonds.append((int(parts[1]), int(parts[2])))
+    return atoms, bonds
 
-    # 优先：Open Babel CLI 补氢（生产环境最稳）
+
+def _element_from_type(atype: str) -> str:
+    """从 Tripos 原子类型粗取元素符号。"""
+    t = (atype or "").strip()
+    if not t:
+        return ""
+    if "." in t:
+        t = t.split(".", 1)[0]
+    if len(t) >= 2 and t[1].islower():
+        return t[0].upper() + t[1].lower()
+    return t[0].upper()
+
+
+def _rdkit_ob_elements(p: Path) -> dict[int, tuple[str | None, str | None]]:
+    """按原子序号（1-based）返回 (rdkit_elem, ob_elem)。"""
+    out: dict[int, tuple[str | None, str | None]] = {}
+    rd_elems: list[str | None] = []
+    try:
+        m = Chem.MolFromMol2File(
+            str(p), sanitize=False, removeHs=False, cleanupSubstructures=False,
+        )
+        if m is not None:
+            for a in m.GetAtoms():
+                rd_elems.append(a.GetSymbol())
+    except Exception:
+        rd_elems = []
+
+    ob_elems: list[str | None] = []
+    try:
+        from openbabel import pybel
+
+        mol = next(pybel.readfile("mol2", str(p)), None)
+        if mol is not None:
+            pt = Chem.GetPeriodicTable()
+            for a in mol.atoms:
+                z = int(getattr(a, "atomicnum", 0) or 0)
+                ob_elems.append(pt.GetElementSymbol(z) if z > 0 else None)
+    except Exception:
+        try:
+            from openbabel import openbabel as ob
+
+            conv = ob.OBConversion()
+            conv.SetInFormat("mol2")
+            om = ob.OBMol()
+            if conv.ReadFile(om, str(p)):
+                pt = Chem.GetPeriodicTable()
+                for a in ob.OBMolAtomIter(om):
+                    z = a.GetAtomicNum()
+                    ob_elems.append(pt.GetElementSymbol(z) if z else None)
+        except Exception:
+            ob_elems = []
+
+    n = max(len(rd_elems), len(ob_elems))
+    for i in range(n):
+        rd = rd_elems[i] if i < len(rd_elems) else None
+        oe = ob_elems[i] if i < len(ob_elems) else None
+        out[i + 1] = (rd, oe)
+    return out
+
+
+def _evaluate_p_type_fix(
+    atom: dict,
+    atoms_by_id: dict[int, dict],
+    bonds: list[tuple[int, int]],
+    elem_map: dict[int, tuple[str | None, str | None]],
+) -> AtomTypeFix | None:
+    """仅在多重证据支持时，将错误磷类型改为 P.3。"""
+    aid = atom["id"]
+    nm = (atom["name"] or "").strip()
+    at = (atom["type"] or "").strip()
+    if at in {"P.3", "P.2"}:
+        return None
+
+    # 可疑类型：Pa/Pb/Pt 或裸 P
+    suspicious = at in {"Pa", "Pb", "Pt", "P"} or (
+        at[:1].upper() == "P" and "." not in at and at.lower() != "p.3"
+    )
+    name_like_p = nm.upper() in {"PA", "PB", "PG", "P"} or (
+        nm.upper().startswith("P") and nm[1:].isdigit()
+    )
+    if not suspicious and not name_like_p:
+        return None
+
+    # 邻居与键长
+    nbr_o = 0
+    po_ok = 0
+    for a, b in bonds:
+        other = b if a == aid else a if b == aid else None
+        if other is None:
+            continue
+        oa = atoms_by_id.get(other)
+        if not oa:
+            continue
+        oe = _element_from_type(oa["type"])
+        on = (oa["name"] or "").upper()
+        is_o = oe == "O" or on.startswith("O") or oa["type"].upper().startswith("O")
+        if not is_o:
+            continue
+        nbr_o += 1
+        dx = atom["x"] - oa["x"]
+        dy = atom["y"] - oa["y"]
+        dz = atom["z"] - oa["z"]
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        if _PO_BOND_MIN <= dist <= _PO_BOND_MAX:
+            po_ok += 1
+
+    rd_e, ob_e = elem_map.get(aid, (None, None))
+    rdkit_p = rd_e == "P"
+
+    evidence = []
+    if name_like_p:
+        evidence.append(f"原子名={nm}")
+    if suspicious:
+        evidence.append(f"原类型={at} 可疑")
+    if nbr_o >= 2:
+        evidence.append(f"连接 {nbr_o} 个 O")
+    if po_ok >= 2:
+        evidence.append(f"{po_ok} 条 P–O 键长合理")
+    if rdkit_p:
+        evidence.append("RDKit=P")
+    if ob_e == "P":
+        evidence.append("OpenBabel=P")
+
+    # 高置信：≥2 个 O 邻居、键长合理，且 RDKit 识别为 P（OB 一致或不可用）
+    high = (
+        nbr_o >= 2
+        and po_ok >= 2
+        and rdkit_p
+        and (ob_e is None or ob_e == "P")
+        and (suspicious or name_like_p)
+    )
+    if high:
+        return AtomTypeFix(
+            atom_id=aid,
+            atom_name=nm,
+            old_type=at,
+            new_type="P.3",
+            reason="; ".join(evidence),
+            confidence="high",
+        )
+
+    # 低置信：仅名字或仅可疑类型 → 警告，不自动改
+    if name_like_p or suspicious:
+        return AtomTypeFix(
+            atom_id=aid,
+            atom_name=nm,
+            old_type=at,
+            new_type=at,
+            reason="证据不足，未自动修改: " + "; ".join(evidence or ["仅名称/类型可疑"]),
+            confidence="low",
+        )
+    return None
+
+
+def sanitize_mol2_atom_types(p: Path) -> SanitizeReport:
+    """基于结构证据清洗原子类型；低置信疑点阻止继续。"""
+    atoms, bonds = _parse_mol2_atoms_bonds(p)
+    if not atoms:
+        return SanitizeReport(warnings=["无法解析 MOL2 原子段"])
+    by_id = {a["id"]: a for a in atoms}
+    elem_map = _rdkit_ob_elements(p)
+    report = SanitizeReport()
+    apply_map: dict[int, str] = {}
+
+    for atom in atoms:
+        fix = _evaluate_p_type_fix(atom, by_id, bonds, elem_map)
+        if fix is None:
+            continue
+        if fix.confidence == "high" and fix.new_type != fix.old_type:
+            report.fixes.append(fix)
+            apply_map[fix.atom_id] = fix.new_type
+            logger.info(
+                "原子类型高置信修复: %s %s→%s (%s)",
+                fix.atom_name, fix.old_type, fix.new_type, fix.reason,
+            )
+        elif fix.confidence == "low":
+            report.warnings.append(
+                f"原子 {fix.atom_name}(#{fix.atom_id}) 类型 {fix.old_type} 可疑但证据不足，"
+                f"未自动修改。依据: {fix.reason}"
+            )
+
+    # 低置信且存在可疑 Pa/Pb 等 → 阻断
+    low_block = [
+        w for w in report.warnings
+        if "Pa" in w or "Pb" in w or "Pt" in w or "可疑" in w
+    ]
+    if low_block and not apply_map:
+        # 有可疑类型警告且没有任何高置信修复时，要求用户检查
+        suspicious_types = {
+            a["type"] for a in atoms if a["type"] in {"Pa", "Pb", "Pt"}
+        }
+        if suspicious_types:
+            report.blocked = True
+            report.block_message = (
+                "检测到疑似错误原子类型 "
+                + ", ".join(sorted(suspicious_types))
+                + "，但自动修复证据不足。请检查 MOL2 元素/键级后重新上传。"
+                + " 详情: "
+                + " | ".join(report.warnings[:5])
+            )
+
+    if apply_map:
+        lines_out: list[str] = []
+        in_atom = False
+        with p.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("@<TRIPOS>ATOM"):
+                    in_atom = True
+                    lines_out.append(line)
+                    continue
+                if s.startswith("@<TRIPOS>"):
+                    in_atom = False
+                    lines_out.append(line)
+                    continue
+                if in_atom and s and not s.startswith("#"):
+                    parts = s.split()
+                    if len(parts) >= 6 and parts[0].isdigit():
+                        aid = int(parts[0])
+                        if aid in apply_map:
+                            parts[5] = apply_map[aid]
+                        while len(parts) < 9:
+                            parts.append("0.000" if len(parts) == 8 else "1")
+                        lines_out.append(_format_mol2_atom_line(parts))
+                        continue
+                lines_out.append(line)
+        p.write_text("".join(lines_out), encoding="utf-8")
+
+    return report
+
+
+def _heavy_atom_fingerprint(p: Path) -> list[dict]:
+    """重原子指纹（用于补氢前后追踪）。"""
+    atoms, _ = _parse_mol2_atoms_bonds(p)
+    out = []
+    for a in atoms:
+        el = _element_from_type(a["type"])
+        if el == "H":
+            continue
+        out.append({
+            "id": a["id"],
+            "name": a["name"],
+            "type": a["type"],
+            "element": el,
+            "xyz": [a["x"], a["y"], a["z"]],
+        })
+    return out
+
+
+def _map_heavy_atoms(before: list[dict], after: list[dict]) -> list[dict]:
+    """按坐标最近邻映射补氢前后重原子。"""
+    mapping = []
+    used: set[int] = set()
+    for b in before:
+        best_i = None
+        best_d = 1e9
+        for i, a in enumerate(after):
+            if i in used:
+                continue
+            if a["element"] != b["element"]:
+                continue
+            dx = b["xyz"][0] - a["xyz"][0]
+            dy = b["xyz"][1] - a["xyz"][1]
+            dz = b["xyz"][2] - a["xyz"][2]
+            d = dx * dx + dy * dy + dz * dz
+            if d < best_d:
+                best_d = d
+                best_i = i
+        if best_i is not None and best_d < 0.25:  # ~0.5 Å
+            used.add(best_i)
+            a = after[best_i]
+            mapping.append({
+                "before_id": b["id"],
+                "after_id": a["id"],
+                "name": b["name"],
+                "element": b["element"],
+                "rmsd2": best_d,
+            })
+        else:
+            mapping.append({
+                "before_id": b["id"],
+                "after_id": None,
+                "name": b["name"],
+                "element": b["element"],
+                "rmsd2": None,
+            })
+    return mapping
+
+
+def _has_explicit_hydrogens(p: Path) -> bool:
+    """判断是否已有显式氢且数量相对合理。"""
+    n_h = _count_mol2_hydrogens(p)
+    n_all = _count_mol2_atoms(p)
+    if n_h <= 0 or n_all <= 0:
+        return False
+    n_heavy = max(1, n_all - n_h)
+    # 粗判：每个重原子平均至少约 0.3 个 H（避免仅 1–2 个误标 H）
+    return n_h >= max(2, int(0.3 * n_heavy))
+
+
+def _add_hydrogens_mol2(src: Path, dst: Path) -> bool:
+    """Open Babel -h 补氢（结构处理，非 pKa 预测）。"""
+    env = source_amber_env()
     for cmd0 in ("obabel", "babel"):
         exe = shutil.which(cmd0, path=env.get("PATH"))
         if not exe:
@@ -274,15 +462,14 @@ def _add_hydrogens_mol2(src: Path, dst: Path) -> bool:
         if r.returncode == 0 and dst.is_file() and dst.stat().st_size > 0:
             n_before = _count_mol2_hydrogens(src)
             n_after = _count_mol2_hydrogens(dst)
-            if n_after > n_before or n_after > 0:
-                logger.info(
-                    "Open Babel 配体补氢完成: %s → %s（氢原子 %d → %d）",
-                    src.name, dst.name, n_before, n_after,
-                )
-                return True
+            logger.info(
+                "Open Babel 补氢完成: %s → %s（H %d → %d）。"
+                "注意：-h 不是目标 pH 下的可靠 pKa/质子化预测。",
+                src.name, dst.name, n_before, n_after,
+            )
+            return True
         logger.warning("Open Babel 补氢失败: %s", (r.stderr or r.stdout or "")[-400:])
 
-    # 次选：RDKit AddHs → SDF → obabel 转 mol2
     try:
         m = Chem.MolFromMol2File(
             str(src), sanitize=True, removeHs=False, cleanupSubstructures=False,
@@ -310,38 +497,15 @@ def _add_hydrogens_mol2(src: Path, dst: Path) -> bool:
                     capture_output=True, text=True, timeout=60, env=env,
                 )
                 if r.returncode == 0 and dst.is_file() and dst.stat().st_size > 0:
-                    n_before = _count_mol2_hydrogens(src)
-                    n_after = _count_mol2_hydrogens(dst)
-                    logger.info(
-                        "RDKit+OpenBabel 配体补氢完成: %s → %s（氢原子 %d → %d）",
-                        src.name, dst.name, n_before, n_after,
-                    )
+                    logger.info("RDKit+OpenBabel 补氢完成: %s", dst.name)
                     return True
     except Exception as e:
         logger.warning("RDKit 补氢路径失败: %s", e)
-
-    return False
-
-
-def _rebuild_mol2_with_obabel(src: Path, dst: Path, add_h: bool = False) -> bool:
-    """用 Open Babel 重建键级/原子类型（可选同时补氢）。"""
-    env = source_amber_env()
-    for cmd0 in ("obabel", "babel"):
-        exe = shutil.which(cmd0, path=env.get("PATH"))
-        if not exe:
-            continue
-        cmd = [exe, "-imol2", str(src), "-omol2", "-O", str(dst)]
-        if add_h:
-            cmd.append("-h")
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
-        if r.returncode == 0 and dst.is_file() and dst.stat().st_size > 0:
-            logger.info("Open Babel 已重建 MOL2%s: %s", "（含补氢）" if add_h else "", dst.name)
-            return True
     return False
 
 
 def _set_mol2_resname(p: str, resname: str) -> None:
-    """将 MOL2 中 subst_name（残基名）统一改为指定名称（如 LIG1）。"""
+    """统一 MOL2 残基名。"""
     rn = (resname or "LIG")[:7]
     lines_out = []
     in_atom = False
@@ -365,8 +529,7 @@ def _set_mol2_resname(p: str, resname: str) -> None:
                     lines_out.append(_format_mol2_atom_line(parts))
                     continue
             lines_out.append(line)
-    with open(p, "w", encoding="utf-8") as f:
-        f.writelines(lines_out)
+    Path(p).write_text("".join(lines_out), encoding="utf-8")
 
 
 def _read_sqm_hint(lig_dir: Path) -> str:
@@ -389,8 +552,8 @@ def _run_antechamber(
     net_charge: int,
     lig_dir: Path,
     env: dict,
-) -> tuple[bool, int]:
-    """运行 antechamber；失败时返回 (False, charge_used)。"""
+) -> bool:
+    """运行 antechamber（单次，失败不改电荷重试）。"""
     cmd = [
         "antechamber",
         "-i", str(mol2_in),
@@ -405,18 +568,101 @@ def _run_antechamber(
     logger.info("运行 antechamber: %s", " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(lig_dir), env=env)
     if r.returncode == 0:
-        return True, net_charge
+        return True
     err = (r.stderr or r.stdout or "")[-1500:]
     sqm_hint = _read_sqm_hint(lig_dir)
     extra = f"\n\nsqm 摘要:\n{sqm_hint}" if sqm_hint else ""
     logger.error("antechamber 失败 (nc=%d): %s%s", net_charge, err, extra)
-    return False, net_charge
+    return False
 
 
-def _safe_mol2_stem(name: str) -> str:
-    """将配体文件名主干清洗为仅含字母数字下划线，避免空格/括号破坏下游命令。"""
-    s = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(name).stem).strip("_")
-    return (s or "ligand")[:80]
+def check_ligand_structure_simple(mol2_path: Path) -> None:
+    """参数化前简单结构检查；失败时抛出简短中文提示。"""
+    p = Path(mol2_path)
+    if not p.is_file() or p.stat().st_size < 32:
+        raise RuntimeError("配体文件无法读取或为空，请重新上传 MOL2。")
+
+    text = p.read_text(encoding="utf-8", errors="replace")
+    if "@<TRIPOS>ATOM" not in text:
+        raise RuntimeError("配体不是有效的 MOL2 文件，请检查格式后重新上传。")
+
+    # 多个分子块
+    n_mol = text.count("@<TRIPOS>MOLECULE")
+    if n_mol > 1:
+        raise RuntimeError("配体文件包含多个分子，请只保留一个小分子后重新上传。")
+
+    atoms, bonds = _parse_mol2_atoms_bonds(p)
+    if len(atoms) < 3:
+        raise RuntimeError("配体原子过少，请确认上传了完整小分子结构。")
+
+    metals = []
+    for a in atoms:
+        el = _element_from_type(a["type"]).upper()
+        if el in _UNSUPPORTED_METALS:
+            metals.append(el)
+        # 名称提示（不据此改类型）
+        nm = (a["name"] or "").upper()
+        if nm in _UNSUPPORTED_METALS:
+            metals.append(nm)
+    if metals:
+        uniq = ", ".join(sorted(set(metals)))
+        raise RuntimeError(
+            f"配体含不支持的金属原子（{uniq}），当前小分子流程无法参数化。"
+        )
+
+    # RDKit 连通片数
+    try:
+        m = Chem.MolFromMol2File(
+            str(p), sanitize=False, removeHs=False, cleanupSubstructures=False,
+        )
+        if m is not None:
+            frags = Chem.GetMolFrags(m, asMols=False)
+            if len(frags) > 1:
+                raise RuntimeError(
+                    "配体包含多个互不连接的片段，请拆成单个分子后重新上传。"
+                )
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
+
+
+def _write_ff_summary(
+    work: Path,
+    *,
+    lig_name: str,
+    resname: str,
+    net_charge: int,
+    charge_source: str,
+) -> dict[str, Any]:
+    """写入并返回力场摘要（供网页与下载包展示）。"""
+    summary = {
+        "ligand": lig_name,
+        "resname": resname,
+        "net_charge": net_charge,
+        "charge_source": charge_source,
+        "force_field": "GAFF2",
+        "charge_method": "AM1-BCC",
+        "tool": "antechamber + parmchk2",
+    }
+    out_dir = work / "ligand_ff_summaries"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fp = out_dir / f"{lig_name}_ff_summary.json"
+    fp.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    # 追加到总表
+    all_fp = work / "ligand_forcefield_summary.json"
+    rows: list[dict] = []
+    if all_fp.is_file():
+        try:
+            rows = json.loads(all_fp.read_text(encoding="utf-8"))
+            if not isinstance(rows, list):
+                rows = []
+        except Exception:
+            rows = []
+    rows = [r for r in rows if r.get("ligand") != lig_name]
+    rows.append(summary)
+    all_fp.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return summary
 
 
 def parameterize_ligand(
@@ -424,79 +670,127 @@ def parameterize_ligand(
     work_dir: str,
     resname: str | None = None,
     add_hydrogens: bool = True,
-) -> tuple[str, str]:
-    """antechamber + parmchk2 参数化，返回 (gaff_mol2, frcmod) 路径。"""
+    *,
+    ligand_index: int = 1,
+    confirmed_charge: int | None = None,
+) -> tuple[str, str, dict[str, Any]]:
+    """antechamber + parmchk2 参数化。
+
+    自动判电荷；失败时可探测其他电荷但禁止静默采用，改为抛出 ChargeConfirmNeeded。
+    返回 (gaff_mol2, frcmod, ff_summary)。
+    """
     check_external_tools()
     env = source_amber_env()
     work = Path(work_dir)
-    # 原始名如 "ligand (1)" 会令 tleap 脚本与目录名冲突，须消毒
     mol2_name = _safe_mol2_stem(Path(mol2_path).name)
-    # 每个配体独立子目录，避免 sqm.in/out 等临时文件互相覆盖
     lig_dir = work / "ligand" / mol2_name
     lig_dir.mkdir(parents=True, exist_ok=True)
 
+    check_ligand_structure_simple(Path(mol2_path))
+
+    input_copy = lig_dir / "ligand_input.mol2"
+    shutil.copy(mol2_path, str(input_copy))
     mol2_dest = lig_dir / f"{mol2_name}.mol2"
     shutil.copy(mol2_path, str(mol2_dest))
 
-    # 修复 PyMOL 常见错误（如 PA/PB → Pa/Pb）
-    fixed_types = _sanitize_mol2_file(mol2_dest)
-    if fixed_types:
-        logger.info("已修正 MOL2 原子类型: %s", ", ".join(fixed_types[:12]))
+    san = sanitize_mol2_atom_types(mol2_dest)
+    if san.blocked:
+        raise RuntimeError(
+            "配体原子类型异常，请检查元素与键连后重新上传。"
+        )
+    if san.fixes:
+        logger.info("已应用 %d 条高置信原子类型修复", len(san.fixes))
 
-    # 默认补氢（PyMOL 拆出的配体常缺氢，否则 AM1-BCC 易失败或电荷偏差）
+    protonated = lig_dir / "ligand_protonated.mol2"
     if add_hydrogens:
-        h_out = lig_dir / f"{mol2_name}_h.mol2"
-        if _add_hydrogens_mol2(mol2_dest, h_out):
-            _sanitize_mol2_file(h_out)
-            mol2_dest = h_out
+        if _has_explicit_hydrogens(mol2_dest):
+            shutil.copy(mol2_dest, str(protonated))
+            logger.info("已有显式氢，跳过补氢: %s", mol2_dest.name)
         else:
-            rebuilt = lig_dir / f"{mol2_name}_obabel.mol2"
-            if _rebuild_mol2_with_obabel(mol2_dest, rebuilt, add_h=True):
-                _sanitize_mol2_file(rebuilt)
-                mol2_dest = rebuilt
+            h_tmp = lig_dir / f"{mol2_name}_h.mol2"
+            if _add_hydrogens_mol2(mol2_dest, h_tmp):
+                sanitize_mol2_atom_types(h_tmp)
+                shutil.copy(h_tmp, str(protonated))
+                mol2_dest = h_tmp
             else:
-                logger.warning("配体补氢未成功，将使用原 MOL2 继续参数化")
+                logger.warning("补氢未成功，继续使用原结构（请确认氢原子完整）")
+                shutil.copy(mol2_dest, str(protonated))
     else:
-        rebuilt = lig_dir / f"{mol2_name}_obabel.mol2"
-        if _rebuild_mol2_with_obabel(mol2_dest, rebuilt, add_h=False):
-            _sanitize_mol2_file(rebuilt)
-            mol2_dest = rebuilt
+        shutil.copy(mol2_dest, str(protonated))
 
-    net_charge = _detect_mol2_charge(str(mol2_dest))
+    detection = detect_ligand_charge(Path(mol2_dest))
+    if confirmed_charge is not None:
+        net_charge = int(confirmed_charge)
+        charge_source = "user_confirmed"
+        logger.info("使用用户确认的净电荷 nc=%d", net_charge)
+    else:
+        net_charge = pick_initial_charge(detection)
+        charge_source = detection.source or "auto"
+        if net_charge is None:
+            # 无法自动判断：直接探测可行电荷并请用户确认
+            repaired = repair_ambertools()
+            if repaired:
+                logger.info("AmberTools 补全: %s", ", ".join(repaired))
+            ac_mol2 = lig_dir / f"{mol2_name}_gaff.mol2"
+
+            def _try(q: int) -> bool:
+                return _run_antechamber(mol2_dest, ac_mol2, q, lig_dir, env)
+
+            working = probe_working_charges(_try, None)
+            if working:
+                raise ChargeConfirmNeeded(ChargeConfirmRequest(
+                    ligand_index=ligand_index,
+                    ligand_name=Path(mol2_path).name,
+                    original_charge=None,
+                    working_charges=working,
+                    message=(
+                        f"无法自动判断配体净电荷；探测到使用净电荷 "
+                        f"{working[0]} 可以完成计算，是否采用？"
+                    ),
+                ))
+            raise RuntimeError(
+                "无法判断配体净电荷，且常见电荷均无法完成 AM1-BCC 计算。"
+                "请检查结构后重试。"
+            )
 
     repaired = repair_ambertools()
     if repaired:
         logger.info("antechamber 前 AmberTools 补全: %s", ", ".join(repaired))
 
     ac_mol2 = lig_dir / f"{mol2_name}_gaff.mol2"
-    ok, used_q = _run_antechamber(mol2_dest, ac_mol2, net_charge, lig_dir, env)
+    ok = _run_antechamber(mol2_dest, ac_mol2, int(net_charge), lig_dir, env)
 
-    # sqm 电荷/电子数不匹配时，依次尝试常见形式电荷（含核苷酸磷酸典型 -2/-3/-4）
-    if not ok:
-        fallbacks = [0, 1, -1, 2, -2, -3, 3, -4, 4]
-        for q in fallbacks:
-            if q == used_q:
-                continue
-            logger.info("antechamber 重试，改用形式电荷 nc=%d", q)
-            ok, used_q = _run_antechamber(mol2_dest, ac_mol2, q, lig_dir, env)
-            if ok:
-                net_charge = q
-                break
+    if not ok and confirmed_charge is None:
+        # 原自动电荷失败：探测其他电荷，供用户确认，禁止静默采用
+        def _try(q: int) -> bool:
+            return _run_antechamber(mol2_dest, ac_mol2, q, lig_dir, env)
 
-    if not ok:
-        sqm_hint = _read_sqm_hint(lig_dir)
-        msg = (
-            "antechamber 失败（AM1-BCC 电荷计算未通过）。\n"
-            "常见原因：\n"
-            "1) PyMOL 导出 MOL2 原子类型错误（如磷 PA/PB 被写成 Pa/Pb）；\n"
-            "2) 形式电荷与分子电子数不匹配；\n"
-            "3) 缺氢或键级异常。\n"
-            "建议：开启「配体自动补氢」，或用 Open Babel："
-            "obabel ligand.pdb -O ligand.mol2 -h。\n"
+        working = probe_working_charges(_try, int(net_charge))
+        if working:
+            q0 = working[0]
+            raise ChargeConfirmNeeded(ChargeConfirmRequest(
+                ligand_index=ligand_index,
+                ligand_name=Path(mol2_path).name,
+                original_charge=int(net_charge),
+                working_charges=working,
+                message=(
+                    f"原电荷（{net_charge}）计算失败，使用净电荷 {q0} 可以完成计算，是否采用？"
+                    + (
+                        f"（另可选：{', '.join(str(x) for x in working[1:])}）"
+                        if len(working) > 1
+                        else ""
+                    )
+                ),
+            ))
+        raise RuntimeError(
+            f"配体参数化失败（净电荷 {net_charge} 及常见备选均未通过）。"
+            "请检查结构、质子化与键连后重新上传。"
         )
-        if sqm_hint:
-            msg += f"\nsqm 输出摘要:\n{sqm_hint}"
-        raise RuntimeError(msg)
+
+    if not ok:
+        raise RuntimeError(
+            f"配体参数化失败（已使用确认净电荷 {net_charge}）。请检查结构后重试。"
+        )
 
     frcmod = lig_dir / f"{mol2_name}.frcmod"
     cmd = [
@@ -509,33 +803,61 @@ def parameterize_ligand(
     logger.info("运行 parmchk2: %s", " ".join(cmd))
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(lig_dir), env=env)
     if r.returncode != 0:
-        raise RuntimeError(f"parmchk2 失败:\n{r.stderr[-1500:]}")
+        raise RuntimeError("配体力场参数检查失败，请检查结构后重试。")
 
-    if resname:
-        _set_mol2_resname(str(ac_mol2), resname)
-
-    logger.info(
-        "配体 GAFF2 参数化完成: %s (电荷=%d, 残基名=%s, 补氢=%s)",
-        mol2_name, net_charge, resname or "-", add_hydrogens,
+    rn = resname or "LIG"
+    _set_mol2_resname(str(ac_mol2), rn)
+    summary = _write_ff_summary(
+        work,
+        lig_name=mol2_name,
+        resname=rn,
+        net_charge=int(net_charge),
+        charge_source=charge_source,
     )
-    return str(ac_mol2), str(frcmod)
+    # 详细报告
+    (lig_dir / "ligand_charge_report.json").write_text(
+        json.dumps(
+            {
+                **summary,
+                "detection": detection.to_dict(),
+                "confirmed_charge": confirmed_charge,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    logger.info(
+        "配体 GAFF2 完成: %s (nc=%d, 来源=%s, 方法=AM1-BCC)",
+        mol2_name, net_charge, charge_source,
+    )
+    return str(ac_mol2), str(frcmod), summary
 
 
 def parameterize_ligands(
     mol2_paths: list[str],
     work_dir: str,
     add_hydrogens: bool = True,
+    *,
+    confirmed_charges: dict[int, int] | None = None,
 ) -> list[dict]:
-    """批量参数化多个配体，残基名依次为 LIG1、LIG2、LIG3。"""
+    """批量参数化；confirmed_charges 为 {配体序号: 净电荷}（用户确认后传入）。"""
     if not mol2_paths:
         raise ValueError("至少需要一个 MOL2 文件")
     if len(mol2_paths) > 3:
         raise ValueError("最多支持 3 个配体")
+    conf = confirmed_charges or {}
     out = []
     for i, p in enumerate(mol2_paths, 1):
         rn = f"LIG{i}"
-        gaff_mol2, frcmod = parameterize_ligand(
-            p, work_dir, resname=rn, add_hydrogens=add_hydrogens,
+        gaff_mol2, frcmod, summary = parameterize_ligand(
+            p,
+            work_dir,
+            resname=rn,
+            add_hydrogens=add_hydrogens,
+            ligand_index=i,
+            confirmed_charge=conf.get(i),
         )
         out.append({
             "index": i,
@@ -543,5 +865,9 @@ def parameterize_ligands(
             "source": Path(p).name,
             "gaff_mol2": gaff_mol2,
             "frcmod": frcmod,
+            "net_charge": summary["net_charge"],
+            "force_field": summary["force_field"],
+            "charge_method": summary["charge_method"],
+            "charge_source": summary["charge_source"],
         })
     return out

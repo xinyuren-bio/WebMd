@@ -22,6 +22,7 @@ from config import USERS_DB
 from api.deps import get_current_user
 from models import Task, TaskStatus, tasks
 from engine.pipeline import run_pipeline
+from engine.ligand_charge import ChargeConfirmNeeded
 from engine.autodl_runner import (
     submit_md_job, dispatch_queued_jobs, pull_analysis_from_remote,
     pull_deliverables_from_remote, finalize_md_delivery,
@@ -72,6 +73,10 @@ def _execute_task(
         logger.info("任务 %s → %s", task_id, status_str)
 
     try:
+        # 合并任务上已保存的确认电荷（弹窗确认后写入）
+        if task.params.get("confirmed_charges"):
+            params = dict(params)
+            params["confirmed_charges"] = task.params["confirmed_charges"]
         output_file = run_pipeline(
             task.work_dir,
             pdb_path,
@@ -80,11 +85,25 @@ def _execute_task(
             update_status,
             cyclic_pdb_path=cyclic_pdb_path,
         )
+        task.params = params
         task.output_file = output_file
         task.status = TaskStatus.COMPLETED
+        task.error_message = ""
+        task.params.pop("charge_confirm", None)
         from gro_util import count_gro_atoms
         gro_p = Path(task.work_dir) / "system.gro"
         task.atom_count = count_gro_atoms(gro_p)
+    except ChargeConfirmNeeded as e:
+        # 不标失败：等待用户确认可行净电荷
+        task.status = TaskStatus.AWAITING_CHARGE_CONFIRM
+        task.error_message = e.req.message
+        task.params = dict(task.params or params)
+        task.params["charge_confirm"] = e.req.to_dict()
+        # 记住原始路径以便确认后续跑
+        task.params["_resume_pdb"] = pdb_path
+        task.params["_resume_mol2s"] = mol2_paths or []
+        task.params["_resume_cyclic"] = cyclic_pdb_path
+        logger.info("任务 %s 等待确认净电荷: %s", task_id, e.req.working_charges)
     except Exception as e:
         task.status = TaskStatus.FAILED
         task.error_message = str(e)
@@ -143,7 +162,9 @@ async def create_task(
     mol2_file_2: Optional[UploadFile] = File(None),
     mol2_file_3: Optional[UploadFile] = File(None),
     cyclic_peptide_file: Optional[UploadFile] = File(None),
+    ligand_type: str = Form(default="mol2"),
     is_cyclic_peptide: str = Form(default="0"),
+    is_linear_peptide: str = Form(default="0"),
     temperature: float = Form(default=DEFAULT_PARAMS["temperature"]),
     pressure: float = Form(default=DEFAULT_PARAMS["pressure"]),
     timestep: float = Form(default=DEFAULT_PARAMS["timestep"]),
@@ -171,8 +192,18 @@ async def create_task(
 
     # 配体补氢开关：表单 "1"/"true"/"on" 为开启（默认开）
     add_h = ligand_add_hydrogens.strip().lower() not in ("0", "false", "no", "off")
-    # 环肽模式：标准氨基酸头尾成环，走 ff14SB 而非 GAFF2
-    is_cyc = is_cyclic_peptide.strip().lower() in ("1", "true", "yes", "on")
+    # 配体类型：mol2 | cyclic | linear（兼容旧字段 is_cyclic_peptide / is_linear_peptide）
+    lt = (ligand_type or "mol2").strip().lower()
+    if lt not in ("mol2", "cyclic", "linear"):
+        if is_cyclic_peptide.strip().lower() in ("1", "true", "yes", "on"):
+            lt = "cyclic"
+        elif is_linear_peptide.strip().lower() in ("1", "true", "yes", "on"):
+            lt = "linear"
+        else:
+            lt = "mol2"
+    is_cyc = lt == "cyclic"
+    is_lin = lt == "linear"
+    is_pep = is_cyc or is_lin
 
     task = Task()
     task.user_id = user["user_id"]
@@ -192,13 +223,16 @@ async def create_task(
     mol2_paths: list[str] = []
     cyclic_pdb_path: Optional[str] = None
 
-    if is_cyc:
+    if is_pep:
+        label = "环肽" if is_cyc else "线形肽"
         if cyclic_peptide_file is None or not cyclic_peptide_file.filename:
-            raise HTTPException(status_code=400, detail="环肽模式请上传环肽 PDB 文件")
+            raise HTTPException(status_code=400, detail=f"{label}模式请上传肽 PDB 文件")
         cyc_raw = Path(cyclic_peptide_file.filename).name
         if not cyc_raw.lower().endswith(".pdb"):
-            raise HTTPException(status_code=400, detail="环肽须为 PDB 格式（标准氨基酸）")
-        cyc_dest = work_dir / "cyclic_peptide_upload.pdb"
+            raise HTTPException(status_code=400, detail=f"{label}须为 PDB 格式（标准氨基酸）")
+        cyc_dest = work_dir / (
+            "cyclic_peptide_upload.pdb" if is_cyc else "linear_peptide_upload.pdb"
+        )
         with open(cyc_dest, "wb") as f:
             f.write(await cyclic_peptide_file.read())
         cyclic_pdb_path = str(cyc_dest)
@@ -233,7 +267,9 @@ async def create_task(
         "tau_p": tau_p,
         "report_interval_ps": report_interval_ps,
         "ligand_add_hydrogens": add_h,
+        "ligand_type": lt,
         "is_cyclic_peptide": is_cyc,
+        "is_linear_peptide": is_lin,
     }
 
     task.work_dir = str(work_dir)
@@ -245,12 +281,12 @@ async def create_task(
         _execute_task,
         task_id,
         str(pdb_path),
-        mol2_paths if not is_cyc else None,
+        mol2_paths if not is_pep else None,
         params,
         cyclic_pdb_path,
     )
 
-    logger.info("任务 %s 已创建（环肽=%s）", task_id, is_cyc)
+    logger.info("任务 %s 已创建（ligand_type=%s）", task_id, lt)
     return task.to_dict()
 
 
@@ -258,6 +294,50 @@ async def create_task(
 async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     task = _task_owner_or_404(task_id, user)
     return task.to_dict()
+
+
+class ChargeConfirmBody(BaseModel):
+    """用户确认采用的配体净电荷。"""
+
+    ligand_index: int = Field(..., ge=1, le=3)
+    charge: int
+
+
+@router.post("/tasks/{task_id}/confirm-charge")
+async def confirm_ligand_charge(
+    task_id: str,
+    body: ChargeConfirmBody,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    """确认净电荷后继续前处理（仅 awaiting_charge_confirm 状态可用）。"""
+    task = _task_owner_or_404(task_id, user)
+    if task.status != TaskStatus.AWAITING_CHARGE_CONFIRM:
+        raise HTTPException(status_code=400, detail="当前任务不需要确认净电荷")
+    conf = task.params.get("charge_confirm") or {}
+    allowed = list(conf.get("working_charges") or [])
+    if body.charge not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"请选择提示中的可行净电荷：{allowed}",
+        )
+    confirmed = dict(task.params.get("confirmed_charges") or {})
+    confirmed[str(body.ligand_index)] = body.charge
+    task.params["confirmed_charges"] = confirmed
+    task.params.pop("charge_confirm", None)
+    task.error_message = ""
+    task.status = TaskStatus.PROCESSING_LIGAND
+    task.save()
+
+    pdb_path = task.params.get("_resume_pdb") or str(Path(task.work_dir) / "protein.pdb")
+    mol2s = task.params.get("_resume_mol2s")
+    if not mol2s:
+        mol2s = sorted(str(p) for p in Path(task.work_dir).glob("ligand_*.mol2"))
+    cyclic = task.params.get("_resume_cyclic")
+    background_tasks.add_task(
+        _execute_task, task_id, pdb_path, mol2s, dict(task.params), cyclic,
+    )
+    return {"ok": True, "task_id": task_id, "confirmed_charges": confirmed}
 
 
 @router.get("/tasks/{task_id}/public")

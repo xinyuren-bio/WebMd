@@ -421,17 +421,27 @@
   }
 
   function clearComponents() {
-    if (stage) {
-      if (currentComp) {
-        stage.removeComponent(currentComp);
-        currentComp = null;
-      }
-      ligandComps.forEach(function (c) {
-        stage.removeComponent(c);
-      });
+    if (!stage) {
+      currentComp = null;
       ligandComps = [];
       ligandComp = null;
+      return;
     }
+    // 清空舞台全部组件，避免复用 Stage 时残留旧的棍状表示叠在卡通上
+    try {
+      if (typeof stage.removeAllComponents === "function") {
+        stage.removeAllComponents();
+      } else {
+        (stage.compList || []).slice().forEach(function (c) {
+          stage.removeComponent(c);
+        });
+      }
+    } catch (e) {
+      logDebug("清理组件", e.message || String(e));
+    }
+    currentComp = null;
+    ligandComps = [];
+    ligandComp = null;
   }
 
   function normalizeMol2Files(mol2File) {
@@ -451,21 +461,27 @@
       lc.removeAllRepresentations();
     });
 
-    var protSele = "protein or (polymer and not hetero)";
+    // 双文件：组件0=蛋白整文件，组件1+=配体/环肽整文件（互不混用表示）
     var repErrors = [];
+    var isCyclic = !!window.__webmdCyclicPreview;
 
     function addProt(type, params, label) {
       try {
-        currentComp.addRepresentation(type, Object.assign({ sele: protSele }, params));
+        // 蛋白默认画全部原子对应的 cartoon；口袋细棍可覆盖 sele
+        var p = Object.assign({ sele: "all" }, params || {});
+        currentComp.addRepresentation(type, p);
+        logDebug("蛋白表示", label + " → " + type + " | sele=" + (p.sele || "all"));
       } catch (e) {
         repErrors.push((label || type) + ": " + (e.message || e));
       }
     }
 
-    // 配体按 NGL 内置元素色（CPK）；color 与 colorScheme 同时写，兼容不同 NGL 参数名
+    // 配体/环肽：仅球棍或填充，绝不画在蛋白组件上
     function addLig(comp, label) {
       try {
-        var base = { sele: "all", color: "element", colorScheme: "element" };
+        // 环肽预览隐藏氢，避免大肽看起来像“满屏棍状蛋白”
+        var sele = isCyclic ? "not hydrogen" : "all";
+        var base = { sele: sele, color: "element", colorScheme: "element" };
         if (style === "baker-overall" || style === "baker-pocket") {
           comp.addRepresentation("ball+stick", Object.assign({}, base, { radius: 0.22 }));
         } else if (style === "surface-ligand" || style === "licorice-all") {
@@ -473,8 +489,9 @@
         } else if (style === "cartoon-spacefill") {
           comp.addRepresentation("spacefill", Object.assign({}, base, { scale: 0.35 }));
         } else {
-          comp.addRepresentation("ball+stick", base);
+          comp.addRepresentation("ball+stick", Object.assign({}, base, { scale: 1.2 }));
         }
+        logDebug("配体表示", label + " → stick | sele=" + sele);
       } catch (e) {
         repErrors.push((label || "配体") + ": " + (e.message || e));
       }
@@ -489,16 +506,33 @@
     } else if (style === "surface-ligand") {
       addProt("surface", { color: "chainid", opacity: 0.85 }, "蛋白表面");
     } else if (style === "licorice-all") {
-      addProt("licorice", { color: "element" }, "蛋白");
+      addProt("licorice", { color: "element", colorScheme: "element" }, "蛋白");
     } else if (style === "cartoon-spacefill") {
       addProt("cartoon", { color: "chainid" }, "蛋白");
     } else {
+      // 默认：蛋白只保留 cartoon（不要球棍）
       addProt("cartoon", { color: "chainid" }, "蛋白");
     }
 
     ligandComps.forEach(function (lc, idx) {
       addLig(lc, "配体" + (idx + 1));
     });
+
+    // 默认样式下：从蛋白组件移除一切棍状/球棍，防止残留叠图
+    if (style !== "licorice-all" && style !== "baker-pocket") {
+      try {
+        var stickTypes = { licorice: 1, "ball+stick": 1, spacefill: 1, hyperball: 1 };
+        (currentComp.reprList || []).slice().forEach(function (r) {
+          var name = (r && r.name) || (r && r.type) || "";
+          if (stickTypes[name]) {
+            currentComp.removeRepresentation(r);
+            logDebug("蛋白清理", "已移除残留 " + name);
+          }
+        });
+      } catch (e) {
+        logDebug("蛋白清理失败", e.message || String(e));
+      }
+    }
 
     stage.autoView(800);
     stage.handleResize();
@@ -682,8 +716,18 @@
       throw new Error(ligLabel + " 解析失败");
     }
     sectionViewer.classList.remove("hidden");
-    setHint("预览 · 蛋白 + " + ligandComps.length + " 个" + ligLabel + "（按元素着色）");
-    applyDualStyle(styleSelect ? styleSelect.value : "cartoon-ligand");
+    setHint(
+      "预览 · 蛋白卡通 + " +
+        ligandComps.length +
+        " 个" +
+        ligLabel +
+        "球棍（按元素着色）"
+    );
+    // 环肽/双文件预览默认回到「蛋白卡通 + 配体球棍」，避免沿用「全原子棍状」
+    if (styleSelect) {
+      styleSelect.value = "cartoon-ligand";
+    }
+    applyDualStyle("cartoon-ligand");
   }
 
   function loadFromFiles(pdbFile, mol2File) {
@@ -691,6 +735,7 @@
     if (!pdbFile || !mol2Files.length || !sectionViewer) return;
 
     isLocalPreview = true;
+    window.__webmdCyclicPreview = false;
     resetDebug();
     logDebug("预览模式", "本地上传 PDB + " + mol2Files.length + " 个 MOL2");
 
@@ -734,8 +779,13 @@
     if (!proteinPdb || !cyclicPdb || !sectionViewer) return;
 
     isLocalPreview = true;
+    window.__webmdCyclicPreview = true;
     resetDebug();
     logDebug("预览模式", "本地上传蛋白 PDB + 环肽 PDB");
+    logDebug(
+      "文件",
+      "蛋白=" + (proteinPdb.name || "?") + " | 环肽=" + (cyclicPdb.name || "?")
+    );
 
     waitForNgl(function () {
       setHint("正在加载环肽复合物…");
@@ -749,7 +799,24 @@
             st.loadFile(cyclicPdb, { ext: "pdb", defaultRepresentation: false }),
           ])
             .then(function (comps) {
+              if (!comps || comps.length < 2) {
+                throw new Error("环肽预览需要蛋白与环肽两个结构");
+              }
+              // 若环肽文件原子数接近蛋白，提示可能上传了完整复合物
+              var n0 = comps[0].structure.atomCount;
+              var n1 = comps[1].structure.atomCount;
+              logDebug("原子数", "蛋白组件=" + n0 + " | 环肽组件=" + n1);
               _finishDualPreview(comps, "环肽");
+              if (n1 > 500 && n1 >= n0 * 0.5) {
+                showError(
+                  "环肽文件原子数过多（" +
+                    n1 +
+                    "），接近蛋白（" +
+                    n0 +
+                    "）。预览已按「蛋白卡通 + 第二文件球棍」显示；" +
+                    "请确认 pep.pdb 仅为环肽本身，不要上传整条蛋白或复合物。"
+                );
+              }
             })
             .catch(function (err) {
               var msg = formatErr(err, "环肽预览");
@@ -771,6 +838,7 @@
     if (sectionViewer) sectionViewer.classList.add("hidden");
     clearComponents();
     isLocalPreview = false;
+    window.__webmdCyclicPreview = false;
     resetDebug();
   }
 

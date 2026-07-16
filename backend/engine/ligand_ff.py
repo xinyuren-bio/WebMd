@@ -17,10 +17,11 @@ _FRCMOD_SECTIONS = ("MASS", "BOND", "ANGLE", "DIHE", "IMPROPER", "NONBON")
 
 
 def _find_gaff_mol2(w: Path) -> Path | None:
-    """在任务目录中定位 antechamber 输出的 GAFF2 mol2。"""
+    """在任务目录中定位 antechamber 输出的 GAFF2 mol2（含 ligand/子目录）。"""
     cands = [
         w / "ligand_gaff.mol2",
         *sorted(w.glob("ligand/*_gaff.mol2")),
+        *sorted(w.glob("ligand/**/*_gaff.mol2")),
         *sorted(w.glob("*_gaff.mol2")),
     ]
     for p in cands:
@@ -30,10 +31,11 @@ def _find_gaff_mol2(w: Path) -> Path | None:
 
 
 def _find_frcmod(w: Path) -> Path | None:
-    """在任务目录中定位 parmchk2 输出的 frcmod。"""
+    """在任务目录中定位 parmchk2 输出的 frcmod（含 ligand/子目录）。"""
     cands = [
         w / "ligand.frcmod",
         *sorted(w.glob("ligand/*.frcmod")),
+        *sorted(w.glob("ligand/**/*.frcmod")),
         *sorted(w.glob("*.frcmod")),
     ]
     for p in cands:

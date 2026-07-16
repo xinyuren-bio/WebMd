@@ -14,7 +14,8 @@
   }
 
   function setView(name, pushHash) {
-    var valid = name === "prepare" || name === "analysis" ? name : "intro";
+    var valid =
+      name === "prepare" || name === "analysis" || name === "guide" ? name : "intro";
 
     navLinks.forEach(function (btn) {
       var on = btn.getAttribute("data-workspace") === valid;
@@ -36,7 +37,12 @@
       p.hidden = !show;
     });
 
-    document.body.classList.remove("workspace-intro", "workspace-prepare", "workspace-analysis");
+    document.body.classList.remove(
+      "workspace-intro",
+      "workspace-prepare",
+      "workspace-analysis",
+      "workspace-guide"
+    );
     document.body.classList.add("workspace-" + valid);
 
     if (pushHash !== false) {
@@ -79,8 +85,20 @@
 
   function hashToView() {
     var h = (location.hash || "").replace("#", "");
-    if (h === "prepare" || h === "analysis") setView(h, false);
-    else setView("intro", false);
+    if (h === "prepare" || h === "analysis" || h === "guide") {
+      setView(h, false);
+      return;
+    }
+    // 教程页内锚点（#guide-step-0 等）须保持 guide 视图，不能跳回首页
+    if (h && h.indexOf("guide-") === 0) {
+      setView("guide", false);
+      requestAnimationFrame(function () {
+        var el = document.getElementById(h);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      return;
+    }
+    setView("intro", false);
   }
 
   hashToView();
