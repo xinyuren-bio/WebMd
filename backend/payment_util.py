@@ -9,14 +9,14 @@ import hashlib
 import os
 
 
-# 时长档位：10 ns → ¥10，100 ns → ¥66，200 ns → ¥240
+# 时长档位：10 ns → ¥10，100 ns → ¥150，200 ns → ¥240
 PRICE_10NS = float(os.environ.get("WEBMD_PRICE_10NS", "10"))
-PRICE_100NS = float(os.environ.get("WEBMD_PRICE_100NS", "66"))
+PRICE_100NS = float(os.environ.get("WEBMD_PRICE_100NS", "150"))
 PRICE_200NS = float(os.environ.get("WEBMD_PRICE_200NS", "240"))
 QR_10_ALIPAY = os.environ.get("WEBMD_QR_10_ALIPAY", "/assets/images/pay_10.jpg")
 QR_10_WECHAT = os.environ.get("WEBMD_QR_10_WECHAT", "/assets/images/wechat_pay_10.png")
-QR_150_ALIPAY = os.environ.get("WEBMD_QR_150_ALIPAY", "/assets/images/pay_66.jpg")
-QR_150_WECHAT = os.environ.get("WEBMD_QR_150_WECHAT", "/assets/images/wechat_pay_66.png")
+QR_150_ALIPAY = os.environ.get("WEBMD_QR_150_ALIPAY", "/assets/images/pay_150.jpg")
+QR_150_WECHAT = os.environ.get("WEBMD_QR_150_WECHAT", "/assets/images/wechat_pay_150.png")
 QR_240_ALIPAY = os.environ.get("WEBMD_QR_240_ALIPAY", "/assets/images/pay.jpg")
 QR_240_WECHAT = os.environ.get("WEBMD_QR_240_WECHAT", "/assets/images/wechat_pay.png")
 

@@ -4,9 +4,9 @@
   支付宝 pay_10.jpg
   微信   wechat_pay_10.png
 
-100 ns 模拟（¥66）：
-  支付宝 pay_66.jpg
-  微信   wechat_pay_66.png
+100 ns 模拟（¥150）：
+  支付宝 pay_150.jpg
+  微信   wechat_pay_150.png
 
 200 ns 模拟（¥240）：
   支付宝 pay.jpg
