@@ -122,13 +122,69 @@ def plot_multiline(
     plt.close(fig)
 
 
+def plot_sasa(
+    xs: Sequence[float],
+    ys: Sequence[float],
+    path: str,
+) -> None:
+    """单独绘制 SASA 时序图。"""
+    plot_line(xs, ys, path, "Time (ns)", "SASA (Å²)", "SASA", color=COLOR_SASA)
+
+
+def plot_secondary_structure(
+    ss_data: dict,
+    ss_order: Sequence[str],
+    path: str,
+    xs: Optional[Sequence[float]] = None,
+) -> None:
+    """单独绘制二级结构堆叠面积图。"""
+    apply_md_style()
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    n = 0
+    for v in ss_data.values():
+        if v:
+            n = len(v)
+            break
+    if n <= 0:
+        return
+    if xs is not None and len(xs) == n:
+        x = np.asarray(xs, dtype=float)
+        xlabel = "Time (ns)"
+    else:
+        x = np.arange(n)
+        xlabel = "Frame"
+
+    fig, ax = plt.subplots(figsize=FIG_LINE)
+    bottom = np.zeros(n)
+    has_ss = any(sum(ss_data.get(c, [])) > 0 for c in ss_order)
+    if not has_ss:
+        ax.text(0.5, 0.5, "DSSP N/A", ha="center", va="center", transform=ax.transAxes)
+    else:
+        for cat in ss_order:
+            y = np.array(ss_data.get(cat, [0.0] * n), dtype=float)
+            if len(y) != n:
+                continue
+            ax.fill_between(x, bottom, bottom + y, label=cat, color=SS_COLORS.get(cat, "#888888"), alpha=0.85)
+            bottom = bottom + y
+        ax.set_ylabel("Residue Count")
+        ax.set_title("Secondary Structure Analysis")
+        ax.legend(loc="upper right", ncol=3)
+        ax.grid(alpha=0.3)
+    ax.set_xlabel(xlabel)
+    fig.tight_layout()
+    save_figure(fig, path)
+    plt.close(fig)
+
+
 def plot_sasa_ss(
     sasa_y: Optional[Sequence[float]],
     ss_data: dict,
     ss_order: Sequence[str],
     path: str,
 ) -> None:
-    """SASA + 二级结构堆叠面积双面板图。"""
+    """SASA + 二级结构堆叠面积双面板图（兼容旧接口）。"""
     apply_md_style()
     import matplotlib.pyplot as plt
     import numpy as np

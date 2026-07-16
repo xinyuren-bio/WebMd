@@ -23,6 +23,7 @@ SCRIPTS = [
     "traj_analyze.py",
     "advanced_analyze.py",
     "peptide_resid_map.py",
+    "hbond_residue_timeline.py",
     "pack_deliverables.sh",
     "plot_style.py",
     "fel_plot.py",
@@ -64,7 +65,7 @@ set -uo pipefail
 export PATH=/usr/local/gromacs/bin:/usr/bin:/bin:/root/miniconda3/bin:$PATH
 cd {remote}
 chmod +x postprocess_traj.sh run_traj_analysis.sh pack_deliverables.sh 2>/dev/null || true
-rm -f fit.xtc mol.xtc nojump.xtc
+rm -f fit.xtc fit_system.xtc mol.xtc nojump.xtc
 echo "===== POSTPROCESS ====="
 bash postprocess_traj.sh 2>&1 | tee postprocess_rerun.log | tail -100
 echo "===== ANALYSIS ====="

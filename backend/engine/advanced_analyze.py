@@ -81,8 +81,9 @@ def _跑带日志(
             timeout=3600,
             env=env,
         )
-        err = (r.stderr or r.stdout or "")[-800:]
-        return r.returncode == 0, err
+        # gmx -h 常写 stdout；合并两端便于检测子命令
+        blob = ((r.stdout or "") + "\n" + (r.stderr or ""))[-2000:]
+        return r.returncode == 0, blob
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
 
@@ -108,17 +109,69 @@ def _定位dssp可执行文件() -> Optional[str]:
 def _检测dssp模式(gmx: str, wd: Path) -> str:
     """
     检测 GROMACS DSSP 子命令模式：
-    - native：GROMACS 2024+ 内置 gmx dssp（-num）
+    - native：存在 gmx dssp（2023 仅 -o；2024+ 另有 -num）
     - legacy：gmx do_dssp + 外部 mkdssp
     - none：不可用
+
+    注意：不可要求帮助文本含 -num；GROMACS 2023.2 的 gmx dssp 无 -num，
+    旧逻辑会误判为 none，导致 DSSP 面板空白。
     """
-    ok, help_native = _跑带日志(gmx, "dssp", "-h", wd=wd)
-    if ok and "-num" in help_native:
+    _, help_native = _跑带日志(gmx, "dssp", "-h", wd=wd)
+    text = (help_native or "").lower()
+    if "is not a gromacs command" not in text and (
+        "synopsis" in text or "gmx dssp" in text or "secondary structure" in text
+    ):
         return "native"
-    ok, _ = _跑带日志(gmx, "do_dssp", "-h", wd=wd)
-    if ok:
+    _, help_leg = _跑带日志(gmx, "do_dssp", "-h", wd=wd)
+    text2 = (help_leg or "").lower()
+    if "is not a gromacs command" not in text2 and (
+        "do_dssp" in text2 or "secondary structure" in text2 or "synopsis" in text2
+    ):
         return "legacy"
     return "none"
+
+
+def _dssp帮助含选项(gmx: str, wd: Path, flag: str) -> bool:
+    """检查 gmx dssp -h 是否包含某选项（如 -num、-clear）。"""
+    _, help_txt = _跑带日志(gmx, "dssp", "-h", wd=wd)
+    return flag in (help_txt or "")
+
+
+def _ss字符归类(ch: str) -> str:
+    """将 DSSP 单字母归入堆叠图类别；链分隔符 '=' 返回空串。"""
+    if ch == "=":
+        return ""
+    if ch in ("H", "I"):
+        return "Alpha"
+    if ch in ("E", "B"):
+        return "Beta"
+    if ch in ("G", "P"):
+        return "3-10"
+    if ch == "T":
+        return "Turn"
+    return "Bend/Coil"
+
+
+def _从ssdat统计二级结构(dat: Path) -> Tuple[List[int], Dict[str, List[float]]]:
+    """解析 gmx dssp 的 ss.dat，按帧统计各二级结构残基数。"""
+    cats = ["Alpha", "Beta", "3-10", "Turn", "Bend/Coil"]
+    data: Dict[str, List[float]] = {c: [] for c in cats}
+    frames: List[int] = []
+    if not dat.is_file():
+        return frames, data
+    for i, ln in enumerate(dat.read_text(encoding="utf-8", errors="replace").splitlines()):
+        s = ln.rstrip("\n")
+        if not s.strip():
+            continue
+        counts = {c: 0.0 for c in cats}
+        for ch in s:
+            cat = _ss字符归类(ch)
+            if cat:
+                counts[cat] += 1.0
+        frames.append(i)
+        for c in cats:
+            data[c].append(counts[c])
+    return frames, data
 
 
 def _尝试安装dssp(log: Callable[[str], None]) -> Optional[str]:
@@ -157,43 +210,67 @@ def _跑dssp分析(
     dssp_xvg: Path,
     log: Callable[[str], None],
 ) -> bool:
-    """按 GROMACS 版本自动选择 gmx dssp 或 gmx do_dssp。"""
+    """按 GROMACS 版本自动选择 gmx dssp 或 gmx do_dssp。
+
+    GROMACS 2023 的 gmx dssp 仅输出 ss.dat（无 -num/-clear）；此时由 ss.dat 统计并写 xvg。
+    """
     mode = _检测dssp模式(gmx, wd)
     if mode == "none":
         log("[DSSP] 当前 GROMACS 无 dssp/do_dssp 子命令")
         return False
 
+    ss_dat = wd / "analysis_dssp.dat"
+
     if mode == "native":
-        log("[DSSP] 使用 GROMACS 内置 gmx dssp（2024+，无需安装 mkdssp）")
-        # 多数 MD 拓扑无全氢，用 -hmode dssp -clear
-        ok, err = _跑带日志(
-            gmx, "dssp", "-s", "md.tpr", "-f", xtc, "-n", "to.ndx",
-            "-num", dssp_xvg.name, "-o", "analysis_dssp.dat",
-            "-tu", "ns", "-hmode", "dssp", "-clear",
-            "-sel", "protein",
-            wd=wd,
-        )
-        if not ok:
-            # 退回 ndx 组号选择
-            ok, err = _跑带日志(
-                gmx, "dssp", "-s", "md.tpr", "-f", xtc, "-n", "to.ndx",
-                "-num", dssp_xvg.name, "-o", "analysis_dssp.dat",
-                "-tu", "ns", "-hmode", "dssp", "-clear",
-                inp=f"{prot}\n", wd=wd,
-            )
-        if not ok:
-            log(f"[DSSP] gmx dssp 失败: {err.strip()[:300]}")
-        return ok and dssp_xvg.is_file()
+        log("[DSSP] 使用 GROMACS 内置 gmx dssp")
+        has_num = _dssp帮助含选项(gmx, wd, "-num")
+        has_clear = _dssp帮助含选项(gmx, wd, "-clear")
+        base = [
+            "dssp", "-s", "md.tpr", "-f", xtc, "-n", "to.ndx",
+            "-o", ss_dat.name, "-tu", "ns", "-hmode", "dssp",
+        ]
+        if has_clear:
+            base.append("-clear")
+        if has_num:
+            base.extend(["-num", dssp_xvg.name])
+
+        ok, err = _跑带日志(gmx, *base, inp=f"{prot}\n", wd=wd)
+        if not ok or not ss_dat.is_file():
+            log(f"[DSSP] gmx dssp 失败: {(err or '').strip()[:300]}")
+            return False
+
+        if has_num and dssp_xvg.is_file():
+            return True
+
+        # 无 -num：从 ss.dat 统计并写兼容 xvg
+        frames, ss_data = _从ssdat统计二级结构(ss_dat)
+        if not frames:
+            log("[DSSP] ss.dat 为空")
+            return False
+        cats = ["Alpha", "Beta", "3-10", "Turn", "Bend/Coil"]
+        lines = [
+            "# WebMD DSSP counts from ss.dat\n",
+            '@    title "Secondary Structure"\n',
+            '@    xaxis  label "Frame"\n',
+            '@    yaxis  label "Residue Count"\n',
+        ]
+        for i, c in enumerate(cats):
+            lines.append(f'@ s{i} legend "{c}"\n')
+        for fi, fr in enumerate(frames):
+            vals = " ".join(str(ss_data[c][fi]) for c in cats)
+            lines.append(f"{fr} {vals}\n")
+        dssp_xvg.write_text("".join(lines), encoding="utf-8")
+        log(f"[DSSP] 已从 ss.dat 统计 {len(frames)} 帧二级结构")
+        return True
 
     # legacy: do_dssp + 外部 mkdssp
     dssp_bin = _定位dssp可执行文件() or _尝试安装dssp(log)
     if not dssp_bin:
         log("[DSSP] 未找到 mkdssp：请 apt install dssp 或 conda install -c conda-forge dssp")
-        log("[DSSP] 或升级 GROMACS 至 2024+ 使用内置 gmx dssp")
         return False
     env = {"DSSP": dssp_bin}
     log(f"[DSSP] 使用 gmx do_dssp + {dssp_bin}")
-    # Ubuntu dssp 包多为 v4，优先 -ver 4
+    err = ""
     for ver_flag in ("-ver", "4"), ("",):
         args = ["do_dssp", "-s", "md.tpr", "-f", xtc, "-n", "to.ndx",
                 "-o", "analysis_dssp.xpm", "-sc", dssp_xvg.name, "-tu", "ns"]
@@ -202,7 +279,7 @@ def _跑dssp分析(
         ok, err = _跑带日志(gmx, *args, inp=f"{prot}\n", wd=wd, extra_env=env)
         if ok and dssp_xvg.is_file():
             return True
-    log(f"[DSSP] gmx do_dssp 失败: {err.strip()[:300]}")
+    log(f"[DSSP] gmx do_dssp 失败: {(err or '').strip()[:300]}")
     return False
 
 
@@ -607,7 +684,10 @@ def _跑fel(
 
 def _归一化ss列名(name: str) -> Optional[str]:
     """将 gmx dssp 列名映射到堆叠图类别。"""
-    n = name.lower()
+    n = name.strip()
+    if n in ("Alpha", "Beta", "3-10", "Turn", "Bend/Coil"):
+        return n
+    n = n.lower()
     if "alpha" in n or "a-helix" in n or n == "helix" or n == "h":
         return "Alpha"
     if "beta" in n or "b-sheet" in n or "sheet" in n or n == "e":
@@ -634,7 +714,7 @@ def _跑sasa二级结构(
     plot_dir: Path,
     log: Callable[[str], None],
 ) -> bool:
-    """SASA + DSSP 二级结构计数堆叠图（双面板）。"""
+    """分别计算并绘制 SASA 与 DSSP 二级结构（两张独立图）。"""
     prot = groups["protein"]
     sasa_xvg = wd / "analysis_sasa.xvg"
     dssp_xvg = wd / "analysis_dssp_sc.xvg"
@@ -645,68 +725,177 @@ def _跑sasa二级结构(
     )
     dssp_ok = _跑dssp分析(wd, gmx, xtc, prot, dssp_xvg, log)
     if not sasa_ok and not dssp_ok:
-        log("[SASA/DSSP] 计算均失败（可能未安装 dssp 或轨迹过短）")
+        log("[SASA/DSSP] 计算均失败")
         return False
 
     try:
-        from plot_style import plot_sasa_ss
+        from plot_style import plot_sasa, plot_secondary_structure
     except ImportError:
         log("[SASA/DSSP] 缺少 matplotlib，跳过出图")
         return False
 
-    frames: Optional[List[float]] = None
-    sasa_vals: Optional[List[float]] = None
+    plot_dir.mkdir(parents=True, exist_ok=True)
+    any_ok = False
+
     if sasa_ok and sasa_xvg.is_file():
         rows = _读xvg数据(sasa_xvg)
         if rows:
-            frames = [r[0] for r in rows]
-            sasa_vals = [r[1] for r in rows]  # nm² → 换算为 Å²
-            sasa_vals = [v * 100.0 for v in sasa_vals]
+            xs = [r[0] for r in rows]
+            ys = [r[1] * 100.0 for r in rows]  # nm² → Å²
             _xvg转csv(sasa_xvg, csv_dir / "sasa.csv", ["time_ns", "sasa_nm2"])
+            plot_sasa(xs, ys, str(plot_dir / "sasa.png"))
+            log("[SASA] 已生成: sasa.png")
+            any_ok = True
 
     ss_cats = ["Alpha", "Beta", "3-10", "Turn", "Bend/Coil"]
     ss_data: Dict[str, List[float]] = {c: [] for c in ss_cats}
+    ss_xs: Optional[List[float]] = None
 
     if dssp_ok and dssp_xvg.is_file():
         legends = _读xvg列名(dssp_xvg)
         rows = _读xvg数据(dssp_xvg)
         if rows:
-            if frames is None:
-                frames = [r[0] for r in rows]
+            ss_xs = [float(r[0]) for r in rows]
+            # 若 x 像帧序号且轨迹有时间，仍可用帧号作横轴；保持原值
             col_map: Dict[int, str] = {}
             for i, leg in enumerate(legends):
                 cat = _归一化ss列名(leg)
                 if cat:
-                    col_map[i + 1] = cat  # xvg 第 0 列为时间
+                    col_map[i + 1] = cat
             if not col_map:
-                # 默认列序（常见 gmx dssp -sc 输出）
-                default = ["Bend/Coil", "Turn", "Beta", "Bend/Coil", "Alpha", "3-10"]
-                for j in range(1, min(len(rows[0]), 7)):
-                    col_map[j] = default[j - 1] if j - 1 < len(default) else "Bend/Coil"
-            for _ in ss_cats:
-                ss_data[_] = [0.0] * len(rows)
+                default = ["Alpha", "Beta", "3-10", "Turn", "Bend/Coil"]
+                for j in range(1, min(len(rows[0]), len(default) + 1)):
+                    col_map[j] = default[j - 1]
+            for c in ss_cats:
+                ss_data[c] = [0.0] * len(rows)
             for ri, r in enumerate(rows):
                 for ci, val in enumerate(r[1:], start=1):
                     cat = col_map.get(ci)
                     if cat:
                         ss_data[cat][ri] += val
-            # 写 CSV
             csv_p = csv_dir / "secondary_structure.csv"
             csv_p.parent.mkdir(parents=True, exist_ok=True)
             with csv_p.open("w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
                 w.writerow(["frame"] + ss_cats)
-                for i, fr in enumerate(frames or range(len(rows))):
+                for i in range(len(rows)):
                     w.writerow([i] + [ss_data[c][i] for c in ss_cats])
+            plot_secondary_structure(ss_data, ss_cats, str(plot_dir / "secondary_structure.png"), xs=ss_xs)
+            log("[DSSP] 已生成: secondary_structure.png")
+            any_ok = True
 
-    if frames is None:
+    return any_ok
+
+
+def _跑氢键残基时间线(
+    wd: Path,
+    xtc_name: str,
+    groups: Dict[str, int],
+    csv_dir: Path,
+    plot_dir: Path,
+    log: Callable[[str], None],
+) -> bool:
+    """绘制蛋白-配体/肽氢键残基时间图（md_xhs 风格）。"""
+    try:
+        from hbond_residue_timeline import run_hbond_residue_timeline
+    except ImportError as e:
+        log(f"[HBond-map] 跳过（需 MDAnalysis）: {e}")
         return False
 
-    out_png = plot_dir / "sasa_secondary_structure.png"
-    plot_dir.mkdir(parents=True, exist_ok=True)
-    plot_sasa_ss(sasa_vals, ss_data, ss_cats, str(out_png))
-    log(f"[SASA/DSSP] 已生成: {out_png.name}")
-    return True
+    pep = _读环肽残基范围(wd)
+    gro = wd / "md.gro"
+    if not gro.is_file():
+        gro = wd / "npt.gro"
+    lig_res_list = _从gro找所有配体残基(gro) if gro.is_file() else []
+
+    if pep is not None:
+        a, b = pep
+        g1 = f"protein and not (resid {a} to {b})"
+        g2 = f"resid {a} to {b}"
+        protein_side = "group1"
+        tag2 = "peptide"
+    elif lig_res_list:
+        g1 = "protein"
+        g2 = str(lig_res_list[0])
+        protein_side = "auto"
+        tag2 = lig_res_list[0]
+    elif "ligand" in groups:
+        g1 = "protein"
+        g2 = "resname LIG"
+        protein_side = "auto"
+        tag2 = "LIG"
+    else:
+        log("[HBond-map] 未找到配体/肽，跳过")
+        return False
+
+    # 尽量用无溶剂轨迹，显著加快 MDAnalysis
+    topo = None
+    traj = None
+    cpx_pdb = wd / "complex.pdb"
+    fit = wd / xtc_name
+    fit_sys = wd / "fit_system.xtc"
+    solute_xtc = wd / "_hbond_solute.xtc"
+    cpx_id = groups.get("complex")
+    gmx = os.environ.get("GMX", "gmx")
+
+    if cpx_id is not None and (wd / "md.tpr").is_file() and fit.is_file():
+        src = str(fit_sys if fit_sys.is_file() else fit)
+        if _跑(gmx, "trjconv", "-f", src, "-s", "md.tpr", "-n", "to.ndx",
+               "-o", solute_xtc.name, inp=f"{cpx_id}\n", wd=wd):
+            # 同步溶质 pdb
+            if not cpx_pdb.is_file() or cpx_pdb.stat().st_size < 1000:
+                _跑(gmx, "trjconv", "-f", src, "-s", "md.tpr", "-n", "to.ndx",
+                    "-dump", "0", "-o", cpx_pdb.name, inp=f"{cpx_id}\n", wd=wd)
+            if cpx_pdb.is_file() and solute_xtc.is_file():
+                topo, traj = str(cpx_pdb), str(solute_xtc)
+
+    if topo is None:
+        if cpx_pdb.is_file() and fit.is_file():
+            topo, traj = str(cpx_pdb), str(fit)
+        elif (wd / "md.tpr").is_file() and fit_sys.is_file():
+            topo, traj = str(wd / "md.tpr"), str(fit_sys)
+        elif (wd / "md.tpr").is_file() and fit.is_file():
+            topo, traj = str(wd / "md.tpr"), str(fit)
+        else:
+            log("[HBond-map] 缺少拓扑或轨迹，跳过")
+            return False
+
+    out_dir = plot_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        png, csv_p = run_hbond_residue_timeline(
+            topology=topo,
+            trajectory=traj,
+            group1=g1,
+            group2=g2,
+            output_dir=str(out_dir),
+            prefix="hbond_residue_timeline",
+            protein_side=protein_side,
+            d_a_cutoff=3.0,
+            min_frequency=0.05,
+        )
+    except Exception as e:
+        log(f"[HBond-map] 计算失败: {e}")
+        return False
+    finally:
+        try:
+            if solute_xtc.is_file():
+                solute_xtc.unlink()
+        except OSError:
+            pass
+
+    if csv_p:
+        try:
+            import shutil
+            shutil.copy(csv_p, csv_dir / Path(csv_p).name)
+        except OSError:
+            pass
+    if png:
+        log(f"[HBond-map] 已生成: {Path(png).name}（protein vs {tag2}）")
+        return True
+    log("[HBond-map] 未生成图像")
+    return False
 
 
 def run_advanced(
@@ -717,7 +906,7 @@ def run_advanced(
     plot_dir: Path,
     log: Callable[[str], None],
 ) -> None:
-    """执行高级分析流程（三组 RMSD、FEL、SASA+DSSP）。"""
+    """执行高级分析流程（三组 RMSD、FEL、SASA、DSSP、氢键时间线）。"""
     log("--- 高级分析 ---")
     groups = _resolve_groups(wd, gmx)
     bb = groups.get("backbone", 4)
@@ -754,7 +943,6 @@ def run_advanced(
                 rmsd_series.append((xs, ys, res, color))
                 per_lig_done = True
         if per_lig_done and (plot_dir / f"rmsd_{lig_res_list[0].lower()}.png").is_file():
-            # 兼容旧交付检查：首个配体图复制为 rmsd_ligand.png
             import shutil
             shutil.copy(
                 plot_dir / f"rmsd_{lig_res_list[0].lower()}.png",
@@ -777,4 +965,5 @@ def run_advanced(
 
     _跑fel(wd, gmx, xtc_name, groups, plot_dir, log)
     _跑sasa二级结构(wd, gmx, xtc_name, groups, csv_dir, plot_dir, log)
+    _跑氢键残基时间线(wd, xtc_name, groups, csv_dir, plot_dir, log)
     log("--- 高级分析结束 ---")

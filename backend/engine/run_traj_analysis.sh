@@ -20,7 +20,7 @@ if ! command -v "$PY" >/dev/null 2>&1; then
   PY="/usr/bin/python"
 fi
 if command -v "$PY" >/dev/null 2>&1; then
-  $PY -m pip install -q numpy matplotlib 2>>"$LOG" || true
+  $PY -m pip install -q numpy matplotlib MDAnalysis 2>>"$LOG" || true
 else
   _log "警告：未找到 python，将使用 GMX 备用分析"
   PY=""
