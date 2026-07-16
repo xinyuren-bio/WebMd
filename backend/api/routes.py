@@ -853,6 +853,95 @@ async def admin_resend_delivery(task_id: str, admin_key: str = "", background_ta
     return {"ok": True, "task_id": task_id, "message": "已触发重新拉取并发送交付邮件"}
 
 
+def _resolve_rerun_inputs(task: Task) -> tuple[str, list[str] | None, str | None]:
+    """从任务工作目录解析重跑所需的蛋白/配体/肽路径。"""
+    work = Path(task.work_dir)
+    params = task.params or {}
+    pdb_path = params.get("_resume_pdb") or str(work / "protein.pdb")
+    if not Path(pdb_path).is_file():
+        raise HTTPException(status_code=400, detail=f"缺少蛋白文件: {pdb_path}")
+
+    lt = str(params.get("ligand_type") or "").strip().lower()
+    if not lt:
+        if params.get("is_cyclic_peptide"):
+            lt = "cyclic"
+        elif params.get("is_linear_peptide"):
+            lt = "linear"
+        else:
+            lt = "mol2"
+
+    if lt in ("cyclic", "linear"):
+        cyclic = params.get("_resume_cyclic")
+        if not cyclic or not Path(str(cyclic)).is_file():
+            for name in (
+                "linear_peptide_upload.pdb",
+                "peptide_from_complex.pdb",
+                "cyclic_peptide_upload.pdb",
+                "linear_peptide.pdb",
+            ):
+                cand = work / name
+                if cand.is_file():
+                    cyclic = str(cand)
+                    break
+        if not cyclic or not Path(str(cyclic)).is_file():
+            raise HTTPException(status_code=400, detail="缺少肽 PDB，无法重跑")
+        return pdb_path, None, str(cyclic)
+
+    mol2s = params.get("_resume_mol2s")
+    if not mol2s:
+        mol2s = sorted(str(p) for p in work.glob("ligand_*.mol2"))
+    mol2s = [m for m in (mol2s or []) if Path(m).is_file()]
+    if not mol2s:
+        raise HTTPException(status_code=400, detail="缺少配体 MOL2，无法重跑")
+    return pdb_path, mol2s, None
+
+
+@router.post("/admin/tasks/{task_id}/rerun")
+async def admin_rerun_task(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    admin_key: str = "",
+):
+    """管理员：从前处理流水线重跑卡住/失败的任务（不改支付状态）。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.status not in (
+        TaskStatus.FAILED,
+        TaskStatus.SOLVATING,
+        TaskStatus.PROCESSING_PROTEIN,
+        TaskStatus.PROCESSING_LIGAND,
+        TaskStatus.CONVERTING_GMX,
+        TaskStatus.GENERATING_MDP,
+        TaskStatus.PACKAGING,
+        TaskStatus.PENDING,
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"当前状态 {task.status.value} 不允许重跑（仅失败或前处理中可重跑）",
+        )
+
+    pdb_path, mol2s, cyclic = _resolve_rerun_inputs(task)
+    task.error_message = ""
+    task.status = TaskStatus.PENDING
+    task.output_file = ""
+    task.save()
+    background_tasks.add_task(
+        _execute_task, task_id, pdb_path, mol2s, dict(task.params), cyclic,
+    )
+    logger.info("管理员触发重跑任务 %s", task_id)
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "message": "已触发前处理重跑",
+        "pdb": pdb_path,
+        "cyclic": cyclic,
+        "mol2_count": len(mol2s or []),
+    }
+
+
 @router.get("/tasks/{task_id}/download")
 async def download_task(task_id: str, user: dict = Depends(get_current_user)):
     task = _task_owner_or_404(task_id, user)
