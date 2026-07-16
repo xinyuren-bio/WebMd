@@ -176,12 +176,11 @@ def probe_working_charges(
         if q in tried:
             continue
         tried.add(q)
-        logger.info("探测可行净电荷 nc=%d（仅探测，不自动采用）", q)
+        logger.info("探测可行净电荷 nc=%d", q)
         if run_fn(q):
             found.append(q)
-            # 找到 1～2 个即可提示用户，避免过长
-            if len(found) >= 2:
-                break
+            # 自动采用模式：找到 1 个即可，避免多试浪费时间
+            break
     return found
 
 

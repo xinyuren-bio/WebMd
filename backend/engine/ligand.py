@@ -737,6 +737,9 @@ def parameterize_ligand(
         shutil.copy(mol2_dest, str(protonated))
 
     detection = detect_ligand_charge(Path(mol2_dest))
+    ac_mol2 = lig_dir / f"{mol2_name}_gaff.mol2"
+    ok = False
+
     if confirmed_charge is not None:
         net_charge = int(confirmed_charge)
         charge_source = "user_confirmed"
@@ -744,55 +747,44 @@ def parameterize_ligand(
     else:
         net_charge = pick_initial_charge(detection)
         charge_source = detection.source or "auto"
-        if net_charge is None:
-            # 无法自动判断：探测可行电荷并自动采用第一个
-            repaired = repair_ambertools()
-            if repaired:
-                logger.info("AmberTools 补全: %s", ", ".join(repaired))
-            ac_mol2 = lig_dir / f"{mol2_name}_gaff.mol2"
-
-            def _try(q: int) -> bool:
-                return _run_antechamber(mol2_dest, ac_mol2, q, lig_dir, env)
-
-            working = probe_working_charges(_try, None)
-            if not working:
-                raise RuntimeError(
-                    "无法判断配体净电荷，且常见电荷均无法完成 AM1-BCC 计算。"
-                    "请检查结构后重试。"
-                )
-            net_charge = int(working[0])
-            charge_source = "auto_probe"
-            logger.warning(
-                "无法自动判断净电荷，已自动采用探测成功的 nc=%d（候选：%s）",
-                net_charge, working,
-            )
 
     repaired = repair_ambertools()
     if repaired:
         logger.info("antechamber 前 AmberTools 补全: %s", ", ".join(repaired))
 
-    ac_mol2 = lig_dir / f"{mol2_name}_gaff.mol2"
-    ok = _run_antechamber(mol2_dest, ac_mol2, int(net_charge), lig_dir, env)
-
-    if not ok and confirmed_charge is None:
-        # 原自动电荷失败：探测其他电荷并自动采用
+    if net_charge is None:
+        # 无法自动判断：探测可行电荷，成功即停止（产物已写出，不再重跑）
         def _try(q: int) -> bool:
             return _run_antechamber(mol2_dest, ac_mol2, q, lig_dir, env)
 
-        working = probe_working_charges(_try, int(net_charge))
+        working = probe_working_charges(_try, None)
         if not working:
             raise RuntimeError(
-                f"配体参数化失败（净电荷 {net_charge} 及常见备选均未通过）。"
-                "请检查结构、质子化与键连后重新上传。"
+                "无法判断配体净电荷，且常见电荷均无法完成 AM1-BCC 计算。"
+                "请检查结构后重试。"
             )
-        old_nc = int(net_charge)
         net_charge = int(working[0])
         charge_source = "auto_probe"
-        logger.warning(
-            "原净电荷 nc=%d 失败，已自动改用 nc=%d（候选：%s）",
-            old_nc, net_charge, working,
-        )
+        ok = ac_mol2.is_file() and ac_mol2.stat().st_size > 0
+        logger.warning("无法自动判断净电荷，已自动采用 nc=%d", net_charge)
+    else:
         ok = _run_antechamber(mol2_dest, ac_mol2, int(net_charge), lig_dir, env)
+        if not ok and confirmed_charge is None:
+            # 原电荷失败：探测并采用第一个可行值（探测成功产物已写出）
+            def _try(q: int) -> bool:
+                return _run_antechamber(mol2_dest, ac_mol2, q, lig_dir, env)
+
+            working = probe_working_charges(_try, int(net_charge))
+            if not working:
+                raise RuntimeError(
+                    f"配体参数化失败（净电荷 {net_charge} 及常见备选均未通过）。"
+                    "请检查结构、质子化与键连后重新上传。"
+                )
+            old_nc = int(net_charge)
+            net_charge = int(working[0])
+            charge_source = "auto_probe"
+            ok = ac_mol2.is_file() and ac_mol2.stat().st_size > 0
+            logger.warning("原净电荷 nc=%d 失败，已自动改用 nc=%d", old_nc, net_charge)
 
     if not ok:
         raise RuntimeError(
