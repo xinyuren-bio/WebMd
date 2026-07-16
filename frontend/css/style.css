@@ -1729,28 +1729,10 @@ body.workspace-guide #app {
   min-width: 200px;
 }
 
-.ligand-reader-panels {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin-top: 8px;
-}
-
-@media (max-width: 900px) {
-  .ligand-reader-panels {
-    grid-template-columns: 1fr;
-  }
-}
-
-.ligand-reader-panel .stepDescription {
-  font-size: 0.875rem;
-  font-weight: 600;
-  margin: 0 0 8px;
-  color: #334155;
-}
-
 .jsme-applet {
-  min-height: 420px;
+  min-height: 480px;
+  max-width: 860px;
+  margin: 0 auto;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
@@ -1780,11 +1762,16 @@ body.workspace-guide #app {
   font-weight: 600;
 }
 
+.ligand-reader-panel .stepDescription {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 8px 0;
+  color: #334155;
+  text-align: center;
+}
+
 .ligand-reader-viewport {
-  min-height: 320px;
-  border: 1px solid var(--color-border, #e2e8f0);
-  border-radius: 8px;
-  background: #0b1220;
+  display: none;
 }
 
 #ligand-reader-status.confirmed {

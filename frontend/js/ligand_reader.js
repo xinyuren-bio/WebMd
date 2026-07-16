@@ -1,5 +1,5 @@
 /**
- * 配体阅读器：JSME 二维编辑 + NGL 三维预览（模仿 Molecule Search / CHARMM-GUI）。
+ * 配体阅读器：JSME 二维编辑（模仿 Molecule Search）。
  */
 (function () {
   "use strict";
@@ -16,10 +16,7 @@
   var tabsEl = document.getElementById("ligand-reader-tabs");
   var warnEl = document.getElementById("ligand-reader-warn");
   var statusEl = document.getElementById("ligand-reader-status");
-  var viewport = document.getElementById("ligand-reader-viewport");
 
-  var stage = null;
-  var ligComp = null;
   var ligands = [];
   var activeIndex = 0;
   var proteinPdbText = "";
@@ -95,40 +92,6 @@
     });
   }
 
-  function ensureStage() {
-    if (!viewport || !window.NGL) return null;
-    if (!stage) {
-      stage = new NGL.Stage(viewport, { backgroundColor: "white" });
-      window.addEventListener("resize", function () {
-        if (stage) stage.handleResize();
-      });
-    }
-    return stage;
-  }
-
-  function showNglPreview(mol2Text) {
-    var st = ensureStage();
-    if (!st || !mol2Text) return;
-    st.removeAllComponents();
-    ligComp = null;
-    var blob = new Blob([mol2Text], { type: "chemical/x-mol2" });
-    st.loadFile(blob, { ext: "mol2", defaultRepresentation: false }).then(function (comp) {
-      ligComp = comp;
-      comp.addRepresentation("ball+stick", {
-        sele: "not hydrogen",
-        aspectRatio: 1.5,
-        radiusScale: 0.8,
-      });
-      comp.addRepresentation("ball+stick", {
-        sele: "hydrogen",
-        color: "white",
-        aspectRatio: 1.2,
-        radiusScale: 0.55,
-      });
-      st.autoView(400);
-    });
-  }
-
   function onJsmeChange() {
     if (!jsmeApplet || syncingEditor) return;
     try {
@@ -144,7 +107,7 @@
    */
   window.jsmeOnLoad = function () {
     try {
-      jsmeApplet = new JSApplet.JSME("jsme-applet", "100%", "420px", {
+      jsmeApplet = new JSApplet.JSME("jsme-applet", "100%", "480px", {
         options: "newlook,hydrogens,reaction,query",
       });
       jsmeApplet.setCallBack("AfterStructureModified", onJsmeChange);
@@ -201,12 +164,11 @@
     var L = ligands[activeIndex];
     updateMeta();
     if (!L || !L.mol2) return;
-    showNglPreview(L.mol2);
     loadMol2IntoJsme(L.mol2);
     var warns = (L.warnings || []).join("；");
     showWarn(warns);
     if (statusEl && !confirmed) {
-      statusEl.textContent = "可在左侧 JSME 画板改氢/改键，然后点「应用编辑到 MOL2」";
+      statusEl.textContent = "可在 JSME 画板改氢/改键，然后点「应用编辑到 MOL2」";
     }
   }
 
@@ -398,10 +360,9 @@
       });
       setConfirmed(false);
       if (smilesInput && next.smiles) smilesInput.value = next.smiles;
-      showNglPreview(next.mol2);
       updateMeta();
-      showWarn((next.warnings || []).join("；") || "已应用编辑并更新三维预览");
-      if (statusEl) statusEl.textContent = "编辑已应用到 MOL2，请核对 3D 后确认";
+      showWarn((next.warnings || []).join("；") || "已应用编辑到 MOL2");
+      if (statusEl) statusEl.textContent = "编辑已应用到 MOL2，请核对画板后确认";
     } catch (e) {
       showWarn(e.message || String(e));
     } finally {
@@ -463,7 +424,6 @@
     confirmed = false;
     setButtonsEnabled(false);
     if (window.WebMD) window.WebMD.confirmedLigandReader = null;
-    if (stage) stage.removeAllComponents();
     if (statusEl) {
       statusEl.textContent = "尚未准备配体";
       statusEl.classList.remove("confirmed");
