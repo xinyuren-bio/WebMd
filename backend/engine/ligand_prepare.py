@@ -291,6 +291,111 @@ def edit_mol2_text(
         shutil.rmtree(work, ignore_errors=True)
 
 
+def mol2_to_editor_formats(mol2_text: str) -> dict[str, Any]:
+    """将 MOL2 转为 JSME 可用的 MOL / SMILES。"""
+    from .env_check import source_amber_env
+    import subprocess
+
+    work = Path(tempfile.mkdtemp(prefix="webmd_to_editor_"))
+    try:
+        src = work / "in.mol2"
+        mol_p = work / "out.mol"
+        smi_p = work / "out.smi"
+        src.write_text(mol2_text, encoding="utf-8")
+        env = source_amber_env()
+        mol = ""
+        smiles = ""
+        for cmd0 in ("obabel", "babel"):
+            exe = shutil.which(cmd0, path=env.get("PATH"))
+            if not exe:
+                continue
+            r1 = subprocess.run(
+                [exe, "-imol2", str(src), "-omol", "-O", str(mol_p)],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            r2 = subprocess.run(
+                [exe, "-imol2", str(src), "-osmi", "-O", str(smi_p)],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            if r1.returncode == 0 and mol_p.is_file():
+                mol = mol_p.read_text(encoding="utf-8", errors="replace")
+            if r2.returncode == 0 and smi_p.is_file():
+                smiles = smi_p.read_text(encoding="utf-8", errors="replace").split()[0]
+            if mol or smiles:
+                break
+        if not mol and not smiles:
+            # RDKit 回退
+            m = Chem.MolFromMol2Block(mol2_text, sanitize=True, removeHs=False)
+            if m is None:
+                m = Chem.MolFromMol2Block(mol2_text, sanitize=False, removeHs=False)
+            if m is None:
+                raise RuntimeError("无法将 MOL2 转为可编辑结构")
+            smiles = Chem.MolToSmiles(m)
+            mol = Chem.MolToMolBlock(m)
+        return {"mol": mol, "smiles": smiles}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def editor_to_mol2(
+    *,
+    mol: str = "",
+    smiles: str = "",
+    gen3d: bool = True,
+) -> dict[str, Any]:
+    """将 JSME 导出的 MOL/SMILES 转回带三维坐标的 MOL2。"""
+    from .env_check import source_amber_env
+    import subprocess
+
+    mol = (mol or "").strip()
+    smiles = (smiles or "").strip()
+    if not mol and not smiles:
+        raise RuntimeError("请提供 MOL 或 SMILES")
+
+    work = Path(tempfile.mkdtemp(prefix="webmd_from_editor_"))
+    try:
+        dst = work / "out.mol2"
+        env = source_amber_env()
+        ok = False
+        for cmd0 in ("obabel", "babel"):
+            exe = shutil.which(cmd0, path=env.get("PATH"))
+            if not exe:
+                continue
+            if mol:
+                src = work / "in.mol"
+                src.write_text(mol + ("\n" if not mol.endswith("\n") else ""), encoding="utf-8")
+                cmd = [exe, "-imol", str(src), "-omol2", "-O", str(dst), "-h"]
+                if gen3d:
+                    cmd.append("--gen3d")
+            else:
+                src = work / "in.smi"
+                src.write_text(smiles + "\n", encoding="utf-8")
+                cmd = [exe, "-ismi", str(src), "-omol2", "-O", str(dst), "-h"]
+                if gen3d:
+                    cmd.append("--gen3d")
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+            if r.returncode == 0 and dst.is_file() and dst.stat().st_size > 0:
+                ok = True
+                break
+            logger.warning("Open Babel 转 MOL2 失败: %s", (r.stderr or r.stdout or "")[-400:])
+        if not ok:
+            raise RuntimeError("无法从编辑器结构生成 MOL2（请检查键连）")
+
+        # 清洗类型后返回
+        san = sanitize_mol2_atom_types(dst)
+        warnings = list(san.warnings or [])
+        if san.blocked:
+            raise RuntimeError("编辑后原子类型异常，请检查结构")
+        if gen3d:
+            warnings.append("已由 SMILES/MOL 重新生成三维坐标（--gen3d），请在 3D 预览中核对姿态")
+        meta = _mol2_meta(dst, name="ligand_edited.mol2")
+        meta["warnings"] = warnings
+        meta["smiles"] = smiles or mol2_to_editor_formats(meta["mol2"]).get("smiles", "")
+        return meta
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def prepare_from_complex(
     pdb_path: Path,
     protein_chains: list[str],

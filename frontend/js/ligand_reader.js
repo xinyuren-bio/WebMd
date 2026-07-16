@@ -1,5 +1,5 @@
 /**
- * 配体阅读器：补氢预览、加/去 H、确认后供提交使用（类 CHARMM-GUI Ligand Reader）。
+ * 配体阅读器：JSME 二维编辑 + NGL 三维预览（模仿 Molecule Search / CHARMM-GUI）。
  */
 (function () {
   "use strict";
@@ -8,7 +8,10 @@
   var btnPrepare = document.getElementById("btn-ligand-prepare");
   var btnAddH = document.getElementById("btn-ligand-add-h");
   var btnStripH = document.getElementById("btn-ligand-strip-h");
+  var btnApply = document.getElementById("btn-jsme-apply");
   var btnConfirm = document.getElementById("btn-ligand-confirm");
+  var btnSmilesLoad = document.getElementById("btn-smiles-load");
+  var smilesInput = document.getElementById("ligand-smiles-input");
   var metaEl = document.getElementById("ligand-reader-meta");
   var tabsEl = document.getElementById("ligand-reader-tabs");
   var warnEl = document.getElementById("ligand-reader-warn");
@@ -21,7 +24,9 @@
   var activeIndex = 0;
   var proteinPdbText = "";
   var confirmed = false;
-  var pickBusy = false;
+  var jsmeApplet = null;
+  var jsmeReady = false;
+  var syncingEditor = false;
 
   function apiFetch(url, opts) {
     if (window.WebMdAuth && window.WebMdAuth.apiFetch) {
@@ -97,43 +102,16 @@
       window.addEventListener("resize", function () {
         if (stage) stage.handleResize();
       });
-      stage.signals.clicked.add(onAtomClicked);
     }
     return stage;
   }
 
-  function isHydrogenAtom(atom) {
-    if (!atom) return false;
-    var el = (atom.element || "").toUpperCase();
-    if (el === "H" || el === "D") return true;
-    var an = (atom.atomname || atom.name || "").toUpperCase();
-    return an.charAt(0) === "H" && (an.length === 1 || /\d/.test(an.charAt(1)) || an.charAt(1) === "");
-  }
-
-  function onAtomClicked(pickingProxy) {
-    if (!pickingProxy || !pickingProxy.atom || pickBusy) return;
-    if (!ligands[activeIndex]) return;
-    var atom = pickingProxy.atom;
-    // NGL serial / index：优先使用 atom.serial（MOL2 常为 1-based）
-    var atomId = atom.serial != null ? atom.serial : atom.index + 1;
-    var isH = isHydrogenAtom(atom);
-    var action = isH ? "remove_atom" : "add_h_on_atom";
-    var tip = isH
-      ? "删除氢原子 #" + atomId + "？"
-      : "在原子 #" + atomId + " (" + (atom.atomname || atom.element) + ") 上补氢？";
-    if (!window.confirm(tip)) return;
-    runEdit(action, atomId);
-  }
-
-  function showActiveLigand() {
-    var L = ligands[activeIndex];
-    updateMeta();
-    if (!L || !L.mol2) return;
+  function showNglPreview(mol2Text) {
     var st = ensureStage();
-    if (!st) return;
+    if (!st || !mol2Text) return;
     st.removeAllComponents();
     ligComp = null;
-    var blob = new Blob([L.mol2], { type: "chemical/x-mol2" });
+    var blob = new Blob([mol2Text], { type: "chemical/x-mol2" });
     st.loadFile(blob, { ext: "mol2", defaultRepresentation: false }).then(function (comp) {
       ligComp = comp;
       comp.addRepresentation("ball+stick", {
@@ -147,31 +125,97 @@
         aspectRatio: 1.2,
         radiusScale: 0.55,
       });
-      comp.addRepresentation("label", {
-        sele: "not hydrogen",
-        labelType: "atomname",
-        color: "#334155",
-        yOffset: 0.3,
-        zOffset: 1.5,
-        attachment: "middle-center",
-        showBackground: true,
-        backgroundColor: "white",
-        backgroundOpacity: 0.55,
-        scale: 0.9,
-      });
       st.autoView(400);
     });
+  }
+
+  function onJsmeChange() {
+    if (!jsmeApplet || syncingEditor) return;
+    try {
+      var smi = jsmeApplet.smiles();
+      if (smilesInput) smilesInput.value = smi || "";
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  /**
+   * JSME 全局回调：模块加载完成后创建画板。
+   */
+  window.jsmeOnLoad = function () {
+    try {
+      jsmeApplet = new JSApplet.JSME("jsme-applet", "100%", "420px", {
+        options: "newlook,hydrogens,reaction,query",
+      });
+      jsmeApplet.setCallBack("AfterStructureModified", onJsmeChange);
+      jsmeReady = true;
+      if (ligands[activeIndex] && ligands[activeIndex].mol2) {
+        loadMol2IntoJsme(ligands[activeIndex].mol2);
+      }
+    } catch (e) {
+      showWarn("JSME 初始化失败: " + (e.message || e));
+    }
+  };
+
+  function loadMolIntoJsme(molText, smiles) {
+    if (!jsmeApplet) return;
+    syncingEditor = true;
+    try {
+      if (molText) {
+        jsmeApplet.readMolFile(molText);
+      } else if (smiles) {
+        jsmeApplet.readGenericMolecularInput(smiles);
+      }
+      if (smilesInput && smiles) smilesInput.value = smiles;
+    } catch (e) {
+      showWarn("加载到画板失败: " + (e.message || e));
+    } finally {
+      setTimeout(function () {
+        syncingEditor = false;
+      }, 100);
+    }
+  }
+
+  async function loadMol2IntoJsme(mol2Text) {
+    if (!jsmeReady || !jsmeApplet) return;
+    try {
+      var resp = await apiFetch("/api/ligand/to-editor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mol2: mol2Text }),
+      });
+      if (!resp.ok) {
+        var err = await resp.json().catch(function () {
+          return {};
+        });
+        throw new Error(err.detail || "转编辑格式失败");
+      }
+      var data = await resp.json();
+      loadMolIntoJsme(data.mol || "", data.smiles || "");
+    } catch (e) {
+      showWarn(e.message || String(e));
+    }
+  }
+
+  function showActiveLigand() {
+    var L = ligands[activeIndex];
+    updateMeta();
+    if (!L || !L.mol2) return;
+    showNglPreview(L.mol2);
+    loadMol2IntoJsme(L.mol2);
     var warns = (L.warnings || []).join("；");
     showWarn(warns);
     if (statusEl && !confirmed) {
-      statusEl.textContent = "请核对结构后点击「确认配体结构」";
+      statusEl.textContent = "可在左侧 JSME 画板改氢/改键，然后点「应用编辑到 MOL2」";
     }
   }
 
   function setButtonsEnabled(on) {
     if (btnAddH) btnAddH.disabled = !on;
     if (btnStripH) btnStripH.disabled = !on;
+    if (btnApply) btnApply.disabled = !on;
     if (btnConfirm) btnConfirm.disabled = !on;
+    if (btnSmilesLoad) btnSmilesLoad.disabled = !on;
   }
 
   function applyLigands(list, proteinText) {
@@ -236,7 +280,7 @@
       }
       var data = await resp.json();
       applyLigands(data.ligands || [], data.protein_pdb || "");
-      if (statusEl) statusEl.textContent = "已生成补氢结构，请核对后确认";
+      if (statusEl) statusEl.textContent = "已生成结构，请在 JSME 中核对/编辑后应用并确认";
     } catch (e) {
       showWarn(e.message || String(e));
     } finally {
@@ -247,18 +291,15 @@
     }
   }
 
-  async function runEdit(action, atomId) {
+  async function runEdit(action) {
     var L = ligands[activeIndex];
     if (!L || !L.mol2) return;
-    pickBusy = true;
     showWarn("");
     try {
-      var body = { mol2: L.mol2, action: action };
-      if (atomId != null) body.atom_id = atomId;
       var resp = await apiFetch("/api/ligand/edit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ mol2: L.mol2, action: action }),
       });
       if (!resp.ok) {
         var err = await resp.json().catch(function () {
@@ -278,15 +319,118 @@
       showActiveLigand();
     } catch (e) {
       showWarn(e.message || String(e));
+    }
+  }
+
+  async function applyJsmeToMol2() {
+    if (!jsmeApplet) {
+      showWarn("JSME 尚未就绪");
+      return;
+    }
+    var L = ligands[activeIndex];
+    if (!L) return;
+    showWarn("");
+    if (btnApply) {
+      btnApply.disabled = true;
+      btnApply.textContent = "应用中…";
+    }
+    try {
+      var mol = "";
+      var smi = "";
+      try {
+        mol = jsmeApplet.molFile() || "";
+      } catch (e1) {
+        mol = "";
+      }
+      try {
+        smi = jsmeApplet.smiles() || "";
+      } catch (e2) {
+        smi = (smilesInput && smilesInput.value) || "";
+      }
+      if (!mol && !smi) throw new Error("画板为空，请先准备或绘制结构");
+
+      var gen3dEl = document.getElementById("jsme-gen3d");
+      var useGen3d = !!(gen3dEl && gen3dEl.checked);
+      if (
+        !useGen3d &&
+        window.WebMD &&
+        window.WebMD.isMol2ComplexMode &&
+        window.WebMD.isMol2ComplexMode()
+      ) {
+        // 复合物默认不 gen3d：优先提示用户用补氢按钮保留对接坐标
+        if (
+          !window.confirm(
+            "未勾选「重新生成 3D 坐标」。将尽量保留平面坐标写入 MOL2，可能不适合直接跑 MD。\n" +
+              "若只需改氢，建议取消并用「全部补氢/去氢」。\n" +
+              "若确认键连已改且可重新摆构，请勾选「重新生成 3D 坐标」后重试。\n\n仍要继续？"
+          )
+        ) {
+          return;
+        }
+      }
+      if (useGen3d) {
+        if (
+          !window.confirm(
+            "重新生成三维坐标会丢失对接姿态。确认继续？"
+          )
+        ) {
+          return;
+        }
+      }
+
+      var resp = await apiFetch("/api/ligand/from-editor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mol: mol, smiles: smi, gen3d: useGen3d }),
+      });
+      if (!resp.ok) {
+        var err = await resp.json().catch(function () {
+          return {};
+        });
+        throw new Error(err.detail || "回写 MOL2 失败");
+      }
+      var data = await resp.json();
+      var next = data.ligand || {};
+      ligands[activeIndex] = Object.assign({}, L, next, {
+        index: L.index,
+        name: L.name || "ligand_edited.mol2",
+        residue_key: L.residue_key,
+      });
+      setConfirmed(false);
+      if (smilesInput && next.smiles) smilesInput.value = next.smiles;
+      showNglPreview(next.mol2);
+      updateMeta();
+      showWarn((next.warnings || []).join("；") || "已应用编辑并更新三维预览");
+      if (statusEl) statusEl.textContent = "编辑已应用到 MOL2，请核对 3D 后确认";
+    } catch (e) {
+      showWarn(e.message || String(e));
     } finally {
-      pickBusy = false;
+      if (btnApply) {
+        btnApply.disabled = false;
+        btnApply.textContent = "应用编辑到 MOL2";
+      }
+    }
+  }
+
+  function loadSmilesToJsme() {
+    if (!jsmeApplet || !smilesInput) return;
+    var smi = (smilesInput.value || "").trim();
+    if (!smi) return;
+    syncingEditor = true;
+    try {
+      jsmeApplet.readGenericMolecularInput(smi);
+    } catch (e) {
+      showWarn("SMILES 加载失败");
+    } finally {
+      setTimeout(function () {
+        syncingEditor = false;
+      }, 100);
     }
   }
 
   function confirmLigands() {
     if (!ligands.length) return;
     setConfirmed(true);
-    // 供提交使用：蛋白 PDB（复合物模式）+ 确认后的 MOL2 文件
     var mol2Files = ligands.map(function (L, i) {
       return new File([L.mol2], L.name || "ligand_" + (i + 1) + ".mol2", {
         type: "chemical/x-mol2",
@@ -305,18 +449,12 @@
       mol2Files: mol2Files,
       ligands: ligands,
     };
-    // 关闭二次补氢，避免重复
     var addH = document.getElementById("ligand-add-h");
     if (addH) addH.checked = false;
     if (statusEl) {
       statusEl.textContent = "已确认配体结构，可继续设置参数并提交任务";
       statusEl.classList.add("confirmed");
     }
-  }
-
-  function showSectionForMol2() {
-    if (!section) return;
-    section.classList.remove("hidden");
   }
 
   function hideAndReset() {
@@ -332,16 +470,21 @@
     }
     if (tabsEl) tabsEl.innerHTML = "";
     if (metaEl) metaEl.textContent = "";
+    if (smilesInput) smilesInput.value = "";
     showWarn("");
   }
 
   if (btnPrepare) btnPrepare.addEventListener("click", runPrepare);
   if (btnAddH) btnAddH.addEventListener("click", function () { runEdit("add_h"); });
   if (btnStripH) btnStripH.addEventListener("click", function () { runEdit("strip_h"); });
+  if (btnApply) btnApply.addEventListener("click", applyJsmeToMol2);
   if (btnConfirm) btnConfirm.addEventListener("click", confirmLigands);
+  if (btnSmilesLoad) btnSmilesLoad.addEventListener("click", loadSmilesToJsme);
 
   window.LigandReader = {
-    show: showSectionForMol2,
+    show: function () {
+      if (section) section.classList.remove("hidden");
+    },
     hide: function () {
       if (section) section.classList.add("hidden");
       hideAndReset();

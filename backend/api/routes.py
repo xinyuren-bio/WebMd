@@ -324,6 +324,54 @@ async def edit_ligand_reader(
         raise HTTPException(status_code=500, detail=f"配体编辑失败: {e}") from e
 
 
+class LigandToEditorBody(BaseModel):
+    """MOL2 → JSME 编辑格式。"""
+
+    mol2: str = Field(..., min_length=32)
+
+
+class LigandFromEditorBody(BaseModel):
+    """JSME MOL/SMILES → MOL2。"""
+
+    mol: str = ""
+    smiles: str = ""
+    gen3d: bool = True
+
+
+@router.post("/ligand/to-editor")
+async def ligand_to_editor(
+    body: LigandToEditorBody,
+    user: dict = Depends(get_current_user),
+):
+    """将当前配体 MOL2 转为 JSME 可编辑的 MOL/SMILES。"""
+    from engine.ligand_prepare import mol2_to_editor_formats
+
+    _ = user
+    try:
+        return {"ok": True, **mol2_to_editor_formats(body.mol2)}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/ligand/from-editor")
+async def ligand_from_editor(
+    body: LigandFromEditorBody,
+    user: dict = Depends(get_current_user),
+):
+    """将 JSME 编辑结果转回三维 MOL2。"""
+    from engine.ligand_prepare import editor_to_mol2
+
+    _ = user
+    try:
+        meta = editor_to_mol2(mol=body.mol, smiles=body.smiles, gen3d=body.gen3d)
+        return {"ok": True, "ligand": meta}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("JSME 结构回写失败")
+        raise HTTPException(status_code=500, detail=f"结构回写失败: {e}") from e
+
+
 @router.post("/tasks")
 async def create_task(
     background_tasks: BackgroundTasks,

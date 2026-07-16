@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260716q">
+<link rel="stylesheet" href="/css/style.css?v=20260716r">
+<link rel="stylesheet" href="/assets/jsme/jsa.css">
+<link rel="stylesheet" href="/assets/jsme/gwt/chrome/chrome.css">
+<link rel="stylesheet" href="/assets/jsme/gwt/chrome/mosaic.css">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -351,32 +354,47 @@
     <div id="ngl-viewport" class="ngl-viewport"></div>
   </section>
 
-  <!-- 配体阅读器：补氢预览与加/去 H（类 CHARMM-GUI Ligand Reader） -->
+  <!-- 配体阅读器：JSME 二维编辑（类 Molecule Search / CHARMM-GUI） -->
   <section class="card hidden" id="section-ligand-reader">
     <div class="card-header">
       <div class="step-badge">2b</div>
       <div>
-        <h2>配体阅读器 · 补氢与质子化</h2>
-        <p class="card-subtitle">上传复合物或 MOL2 后，先核对补氢结构；可一键补氢/去氢，或点击原子加氢/删氢</p>
+        <h2>配体阅读器 · 结构编辑</h2>
+        <p class="card-subtitle">类似 JSME 分子编辑器：可改氢、改键、改电荷；确认后用于参数化</p>
       </div>
     </div>
     <p class="hint" id="ligand-reader-hint">
-      复合物 PDB：选好蛋白链与配体残基后点「准备配体」→ 服务端拆分并补氢 → 核对/改氢 →「确认配体结构」→ 再提交。
-      分开上传 MOL2 时也可在此预览补氢。无需手动改 MOL2 文件。
+      复合物 PDB：选好蛋白链与配体残基后点「准备配体」→ 在下方画板中编辑 →「应用编辑到 MOL2」→「确认配体结构」→ 再提交。
     </p>
     <div class="ligand-reader-toolbar">
       <button type="button" class="btn btn-primary" id="btn-ligand-prepare">准备配体（拆分并补氢）</button>
       <button type="button" class="btn btn-secondary" id="btn-ligand-add-h" disabled>全部补氢</button>
       <button type="button" class="btn btn-secondary" id="btn-ligand-strip-h" disabled>去除全部氢</button>
-      <button type="button" class="btn btn-secondary" id="btn-ligand-confirm" disabled>确认配体结构</button>
+      <button type="button" class="btn btn-secondary" id="btn-jsme-apply" disabled>应用编辑到 MOL2</button>
+      <label class="checkbox-inline" for="jsme-gen3d" title="对接复合物建议关闭，改用全部补氢以保留姿态">
+        <input type="checkbox" id="jsme-gen3d">
+        <span>重新生成 3D 坐标</span>
+      </label>
+      <button type="button" class="btn btn-primary" id="btn-ligand-confirm" disabled>确认配体结构</button>
       <span class="ligand-reader-meta" id="ligand-reader-meta"></span>
     </div>
-    <p class="hint ligand-reader-pick-hint">
-      编辑模式：点击<strong>氢原子</strong>删除；点击<strong>重原子</strong>在该原子上补氢。
-    </p>
+    <div class="ligand-reader-smiles-row">
+      <label for="ligand-smiles-input">SMILES</label>
+      <input type="text" id="ligand-smiles-input" class="payment-payer-note" placeholder="编辑器会同步 SMILES，也可粘贴后点加载">
+      <button type="button" class="btn btn-secondary btn-sm" id="btn-smiles-load" disabled>加载到画板</button>
+    </div>
     <div id="ligand-reader-tabs" class="ligand-reader-tabs"></div>
     <div id="ligand-reader-warn" class="viewer-error hidden" role="alert"></div>
-    <div id="ligand-reader-viewport" class="ngl-viewport ligand-reader-viewport"></div>
+    <div class="ligand-reader-panels">
+      <div class="ligand-reader-panel">
+        <p class="stepDescription">二维编辑（JSME · 显示氢）</p>
+        <div id="jsme-applet" class="jsme-applet"></div>
+      </div>
+      <div class="ligand-reader-panel">
+        <p class="stepDescription">三维预览（NGL）</p>
+        <div id="ligand-reader-viewport" class="ngl-viewport ligand-reader-viewport"></div>
+      </div>
+    </div>
     <p class="status-hint" id="ligand-reader-status">尚未准备配体</p>
   </section>
 
@@ -1078,7 +1096,8 @@
 <script src="/js/viewer.js?v=20260716e"></script>
 <script src="/js/payment.js?v=20260716m"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
-<script src="/js/ligand_reader.js?v=20260716q"></script>
+<script type="text/javascript" src="/assets/jsme/jsme.nocache.js"></script>
+<script src="/js/ligand_reader.js?v=20260716r"></script>
 <script src="/js/app.js?v=20260716q"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>

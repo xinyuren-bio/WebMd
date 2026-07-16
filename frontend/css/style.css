@@ -1710,6 +1710,53 @@ body.workspace-guide #app {
   margin: 0 0 8px;
 }
 
+.ligand-reader-smiles-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+
+.ligand-reader-smiles-row label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.ligand-reader-smiles-row input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.ligand-reader-panels {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .ligand-reader-panels {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ligand-reader-panel .stepDescription {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: #334155;
+}
+
+.jsme-applet {
+  min-height: 420px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
 .ligand-reader-tabs {
   display: flex;
   flex-wrap: wrap;
