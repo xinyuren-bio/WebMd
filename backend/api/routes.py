@@ -48,7 +48,13 @@ class TaskLogHandler(logging.Handler):
             self.task.log_lines = self.task.log_lines[-500:]
 
 
-def _execute_task(task_id: str, pdb_path: str, mol2_paths: list[str], params: dict):
+def _execute_task(
+    task_id: str,
+    pdb_path: str,
+    mol2_paths: list[str] | None,
+    params: dict,
+    cyclic_pdb_path: str | None = None,
+):
     """后台执行任务。"""
     task = tasks.get(task_id)
     if not task:
@@ -67,7 +73,12 @@ def _execute_task(task_id: str, pdb_path: str, mol2_paths: list[str], params: di
 
     try:
         output_file = run_pipeline(
-            task.work_dir, pdb_path, mol2_paths, params, update_status
+            task.work_dir,
+            pdb_path,
+            mol2_paths,
+            params,
+            update_status,
+            cyclic_pdb_path=cyclic_pdb_path,
         )
         task.output_file = output_file
         task.status = TaskStatus.COMPLETED
@@ -128,9 +139,11 @@ async def create_task(
     background_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user),
     pdb_file: UploadFile = File(...),
-    mol2_file: UploadFile = File(...),
+    mol2_file: Optional[UploadFile] = File(None),
     mol2_file_2: Optional[UploadFile] = File(None),
     mol2_file_3: Optional[UploadFile] = File(None),
+    cyclic_peptide_file: Optional[UploadFile] = File(None),
+    is_cyclic_peptide: str = Form(default="0"),
     temperature: float = Form(default=DEFAULT_PARAMS["temperature"]),
     pressure: float = Form(default=DEFAULT_PARAMS["pressure"]),
     timestep: float = Form(default=DEFAULT_PARAMS["timestep"]),
@@ -158,6 +171,8 @@ async def create_task(
 
     # 配体补氢开关：表单 "1"/"true"/"on" 为开启（默认开）
     add_h = ligand_add_hydrogens.strip().lower() not in ("0", "false", "no", "off")
+    # 环肽模式：标准氨基酸头尾成环，走 ff14SB 而非 GAFF2
+    is_cyc = is_cyclic_peptide.strip().lower() in ("1", "true", "yes", "on")
 
     task = Task()
     task.user_id = user["user_id"]
@@ -166,27 +181,43 @@ async def create_task(
     work_dir = Path(TASKS_DIR) / task_id
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    pdb_path = work_dir / pdb_file.filename
+    # 蛋白文件名消毒，避免空格
+    pdb_raw = Path(pdb_file.filename or "protein.pdb").name
+    if not pdb_raw.lower().endswith(".pdb"):
+        raise HTTPException(status_code=400, detail="蛋白须为 PDB 格式")
+    pdb_path = work_dir / "protein.pdb"
     with open(pdb_path, "wb") as f:
         f.write(await pdb_file.read())
 
     mol2_paths: list[str] = []
-    for idx, up in enumerate([mol2_file, mol2_file_2, mol2_file_3], 1):
-        if up is None or not up.filename:
-            continue
-        raw_name = Path(up.filename).name
-        if not raw_name.lower().endswith(".mol2"):
-            raise HTTPException(status_code=400, detail=f"配体 {idx} 须为 MOL2 格式")
-        # 统一存为 ligand_N.mol2，避免 "ligand (1).mol2" 空格导致 tleap 解析失败
-        dest = work_dir / f"ligand_{idx}.mol2"
-        with open(dest, "wb") as f:
-            f.write(await up.read())
-        mol2_paths.append(str(dest))
+    cyclic_pdb_path: Optional[str] = None
 
-    if not mol2_paths:
-        raise HTTPException(status_code=400, detail="至少上传一个 MOL2 配体文件")
-    if len(mol2_paths) > 3:
-        raise HTTPException(status_code=400, detail="最多支持 3 个配体")
+    if is_cyc:
+        if cyclic_peptide_file is None or not cyclic_peptide_file.filename:
+            raise HTTPException(status_code=400, detail="环肽模式请上传环肽 PDB 文件")
+        cyc_raw = Path(cyclic_peptide_file.filename).name
+        if not cyc_raw.lower().endswith(".pdb"):
+            raise HTTPException(status_code=400, detail="环肽须为 PDB 格式（标准氨基酸）")
+        cyc_dest = work_dir / "cyclic_peptide_upload.pdb"
+        with open(cyc_dest, "wb") as f:
+            f.write(await cyclic_peptide_file.read())
+        cyclic_pdb_path = str(cyc_dest)
+    else:
+        for idx, up in enumerate([mol2_file, mol2_file_2, mol2_file_3], 1):
+            if up is None or not up.filename:
+                continue
+            raw_name = Path(up.filename).name
+            if not raw_name.lower().endswith(".mol2"):
+                raise HTTPException(status_code=400, detail=f"配体 {idx} 须为 MOL2 格式")
+            dest = work_dir / f"ligand_{idx}.mol2"
+            with open(dest, "wb") as f:
+                f.write(await up.read())
+            mol2_paths.append(str(dest))
+
+        if not mol2_paths:
+            raise HTTPException(status_code=400, detail="至少上传一个 MOL2 配体文件")
+        if len(mol2_paths) > 3:
+            raise HTTPException(status_code=400, detail="最多支持 3 个配体")
 
     params = {
         "temperature": temperature,
@@ -202,6 +233,7 @@ async def create_task(
         "tau_p": tau_p,
         "report_interval_ps": report_interval_ps,
         "ligand_add_hydrogens": add_h,
+        "is_cyclic_peptide": is_cyc,
     }
 
     task.work_dir = str(work_dir)
@@ -209,9 +241,16 @@ async def create_task(
     tasks[task_id] = task
     task.save()
 
-    background_tasks.add_task(_execute_task, task_id, str(pdb_path), mol2_paths, params)
+    background_tasks.add_task(
+        _execute_task,
+        task_id,
+        str(pdb_path),
+        mol2_paths if not is_cyc else None,
+        params,
+        cyclic_pdb_path,
+    )
 
-    logger.info("任务 %s 已创建", task_id)
+    logger.info("任务 %s 已创建（环肽=%s）", task_id, is_cyc)
     return task.to_dict()
 
 

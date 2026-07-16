@@ -2,7 +2,7 @@
 # 功能说明：tleap 构建 Amber 溶剂化体系，acpype 转换为 GROMACS 拓扑
 # 使用方法：由 pipeline 调用 build_full_system / convert_to_gromacs
 # 依赖环境：AmberTools (tleap) + acpype (pip install acpype)
-# 生成时间：2026-07-14
+# 生成时间：2026-07-16
 # ==================================================
 
 import logging
@@ -135,6 +135,24 @@ saveamberparm complex {prmtop} {inpcrd}
 quit
 """
 
+# 标准氨基酸头尾环肽：ff14SB + loadPdbUsingSeq（避免 N*/C* 末端）+ bond 闭环
+TLEAP_TEMPLATE_CYCLIC = """\
+source leaprc.protein.ff14SB
+source leaprc.water.tip3p
+
+prot = loadpdb {protein_pdb}
+cyc = loadPdbUsingSeq {cyclic_pdb} {leap_seq}
+bond cyc.{resid_start}.N cyc.{resid_end}.C
+
+complex = combine {{ prot cyc }}
+solvatebox complex TIP3PBOX {box_padding}
+addions complex Cl- 0
+addions complex {cation} 0
+{salt_line}
+saveamberparm complex {prmtop} {inpcrd}
+quit
+"""
+
 
 def _normalize_salt_type(salt_type: str) -> str:
     """规范化盐种类为 nacl/kcl；未知值回退 nacl。"""
@@ -181,13 +199,21 @@ def _read_coords_mol2(p: str) -> list[tuple[float, float, float]]:
     return coords
 
 
+def _read_coords_any(p: str) -> list[tuple[float, float, float]]:
+    """按扩展名读取 PDB 或 MOL2 坐标。"""
+    s = str(p).lower()
+    if s.endswith(".pdb"):
+        return _read_coords_pdb(p)
+    return _read_coords_mol2(p)
+
+
 def _estimate_box_volume_A3_coords(
-    protein_pdb: str, gaff_mol2_paths: list[str], pad: float,
+    protein_pdb: str, ligand_paths: list[str], pad: float,
 ) -> float:
-    """估算溶剂化盒子体积 (Å³)，合并蛋白与全部配体坐标。"""
+    """估算溶剂化盒子体积 (Å³)，合并蛋白与全部配体/环肽坐标。"""
     coords = _read_coords_pdb(protein_pdb)
-    for mp in gaff_mol2_paths:
-        coords.extend(_read_coords_mol2(mp))
+    for mp in ligand_paths:
+        coords.extend(_read_coords_any(mp))
     if not coords:
         return 0.0
     xs, ys, zs = zip(*coords)
@@ -297,6 +323,90 @@ def _clean_pdb_for_tleap(pdb_path: str, out_path: str) -> str:
     return out_path
 
 
+def _run_tleap(work: Path, tleap_in: Path, prmtop: Path, inpcrd: Path) -> None:
+    """执行 tleap，失败时抛出含 stdout/stderr 的异常。"""
+    cmd = ["tleap", "-f", str(tleap_in.name)]
+    logger.info("运行 tleap: %s", " ".join(cmd))
+    repaired = repair_ambertools()
+    if repaired:
+        logger.info("tleap 前 AmberTools 补全: %s", ", ".join(repaired))
+    r = subprocess.run(
+        cmd, capture_output=True, text=True, cwd=str(work), env=source_amber_env()
+    )
+    if r.returncode != 0 or not prmtop.exists() or not inpcrd.exists():
+        logger.error("tleap stdout:\n%s", r.stdout[-3000:])
+        logger.error("tleap stderr:\n%s", r.stderr[-3000:])
+        raise RuntimeError(
+            f"tleap 失败。\n\nSTDOUT:\n{r.stdout[-3000:]}\n\nSTDERR:\n{r.stderr[-3000:]}"
+        )
+
+
+def _salt_line_for(
+    salt_type: str,
+    ion_conc: float,
+    protein_pdb_path: str,
+    ligand_paths: list[str],
+    box_padding: float,
+) -> tuple[str, str]:
+    """返回 (cation, salt_line)。"""
+    salt = _normalize_salt_type(salt_type)
+    cation = _SALT_CATION[salt]
+    n_ions = 0
+    if ion_conc > 0 and protein_pdb_path and ligand_paths:
+        vol = _estimate_box_volume_A3_coords(protein_pdb_path, ligand_paths, box_padding)
+        n_ions = _ion_pairs_from_conc(ion_conc, vol)
+        logger.info(
+            "离子对估算: 盐=%s, 浓度=%.3f M, 体积≈%.0f Å³ → %d 对 %s/Cl-",
+            salt.upper(), ion_conc, vol, n_ions, cation,
+        )
+    if n_ions > 0:
+        return cation, f"addionsrand complex {cation} {n_ions} Cl- {n_ions}"
+    return cation, "# 跳过加盐（浓度为 0 或估算离子数为 0）"
+
+
+def build_full_system_cyclic(
+    protein_pdb: str,
+    cyclic_meta: dict,
+    work_dir: str,
+    box_padding: float = 10.0,
+    ion_conc: float = 0.15,
+    salt_type: str = "nacl",
+) -> tuple[str, str]:
+    """用 ff14SB 构建蛋白 + 头尾环肽溶剂化体系，返回 (prmtop, inpcrd)。"""
+    work = Path(work_dir)
+    clean_pdb = _clean_pdb_for_tleap(protein_pdb, str(work / "protein_clean.pdb"))
+    cyc_src = Path(cyclic_meta["clean_pdb"]).resolve()
+    cyc_name = "cyclic_peptide.pdb"
+    cyc_dst = work / cyc_name
+    if cyc_src != cyc_dst.resolve():
+        shutil.copy(str(cyc_src), str(cyc_dst))
+
+    cation, salt_line = _salt_line_for(
+        salt_type, ion_conc, str(clean_pdb), [str(cyc_dst)], box_padding,
+    )
+    prmtop = work / "system.prmtop"
+    inpcrd = work / "system.inpcrd"
+    tleap_in = work / "tleap.in"
+    # leap_seq 已含花括号，如 { ALA GLY ... }
+    script = TLEAP_TEMPLATE_CYCLIC.format(
+        protein_pdb=Path(clean_pdb).name,
+        cyclic_pdb=cyc_name,
+        leap_seq=cyclic_meta["leap_seq"],
+        resid_start=int(cyclic_meta["resid_start"]),
+        resid_end=int(cyclic_meta["resid_end"]),
+        box_padding=box_padding,
+        cation=cation,
+        salt_line=salt_line,
+        prmtop=prmtop.name,
+        inpcrd=inpcrd.name,
+    )
+    tleap_in.write_text(script, encoding="utf-8")
+    logger.info("tleap 环肽脚本:\n%s", script)
+    _run_tleap(work, tleap_in, prmtop, inpcrd)
+    logger.info("Amber 环肽体系构建完成: %s, %s", prmtop.name, inpcrd.name)
+    return str(prmtop), str(inpcrd)
+
+
 def build_full_system(
     protein_pdb: str,
     gaff_mol2: str,
@@ -364,22 +474,7 @@ def build_full_system(
         if s != d:
             shutil.copy(str(s), str(d))
 
-    cmd = ["tleap", "-f", str(tleap_in.name)]
-    logger.info("运行 tleap: %s", " ".join(cmd))
-    repaired = repair_ambertools()
-    if repaired:
-        logger.info("tleap 前 AmberTools 补全: %s", ", ".join(repaired))
-    r = subprocess.run(
-        cmd, capture_output=True, text=True, cwd=str(work), env=source_amber_env()
-    )
-
-    if r.returncode != 0 or not prmtop.exists() or not inpcrd.exists():
-        logger.error("tleap stdout:\n%s", r.stdout[-3000:])
-        logger.error("tleap stderr:\n%s", r.stderr[-3000:])
-        raise RuntimeError(
-            f"tleap 失败。\n\nSTDOUT:\n{r.stdout[-3000:]}\n\nSTDERR:\n{r.stderr[-3000:]}"
-        )
-
+    _run_tleap(work, tleap_in, prmtop, inpcrd)
     logger.info("Amber 体系构建完成: %s, %s", prmtop.name, inpcrd.name)
     return str(prmtop), str(inpcrd)
 

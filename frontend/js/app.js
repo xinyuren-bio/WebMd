@@ -5,6 +5,13 @@
   const mol2Input = document.getElementById("mol2-file");
   const pdbName = document.getElementById("pdb-name");
   const mol2Name = document.getElementById("mol2-name");
+  const cyclicChk = document.getElementById("is-cyclic-peptide");
+  const cyclicInput = document.getElementById("cyclic-peptide-file");
+  const cyclicName = document.getElementById("cyclic-peptide-name");
+  const mol2Group = document.getElementById("ligand-mol2-group");
+  const cyclicGroup = document.getElementById("ligand-cyclic-group");
+  const mol2Actions = document.getElementById("ligand-mol2-actions");
+  const uploadSubtitle = document.getElementById("upload-subtitle");
 
   const btnSubmit = document.getElementById("btn-submit");
   const submitHint = document.getElementById("submit-hint");
@@ -67,6 +74,44 @@
     updatePreview();
   });
 
+  if (cyclicInput) {
+    cyclicInput.addEventListener("change", function () {
+      if (cyclicName) {
+        cyclicName.textContent = this.files[0] ? this.files[0].name : "未选择文件";
+        cyclicName.classList.toggle("has-file", !!this.files[0]);
+      }
+      updateSubmitButton();
+      updatePreview();
+    });
+  }
+
+  function isCyclicMode() {
+    return !!(cyclicChk && cyclicChk.checked);
+  }
+
+  function syncCyclicUi() {
+    var on = isCyclicMode();
+    if (mol2Group) mol2Group.classList.toggle("hidden", on);
+    if (cyclicGroup) cyclicGroup.classList.toggle("hidden", !on);
+    if (mol2Actions) mol2Actions.classList.toggle("hidden", on);
+    if (uploadSubtitle) {
+      uploadSubtitle.textContent = on
+        ? "蛋白 PDB + 环肽 PDB（标准氨基酸，头尾成环；请预先摆好相对位置）"
+        : "蛋白 PDB 必填；配体 MOL2 至少 1 个，最多 3 个（请在外部软件中摆好相对位置）";
+    }
+    var addH = document.getElementById("ligand-add-h");
+    if (addH) {
+      addH.disabled = on;
+      if (on) addH.checked = false;
+    }
+    updateSubmitButton();
+    updatePreview();
+  }
+
+  if (cyclicChk) {
+    cyclicChk.addEventListener("change", syncCyclicUi);
+  }
+
   window.WebMD = window.WebMD || {};
   window.WebMD.onLigandChange = function () {
     updateSubmitButton();
@@ -81,23 +126,40 @@
   }
 
   function updatePreview() {
+    if (!window.MdViewer) return;
+    if (isCyclicMode()) {
+      if (pdbInput.files[0] && cyclicInput && cyclicInput.files[0] && window.MdViewer.loadFromPdbs) {
+        window.MdViewer.loadFromPdbs(pdbInput.files[0], cyclicInput.files[0]);
+      } else {
+        window.MdViewer.hide();
+      }
+      return;
+    }
     var mol2s = getMol2Files();
-    if (pdbInput.files[0] && mol2s.length && window.MdViewer && window.MdViewer.loadFromFiles) {
+    if (pdbInput.files[0] && mol2s.length && window.MdViewer.loadFromFiles) {
       window.MdViewer.loadFromFiles(pdbInput.files[0], mol2s);
-    } else if (window.MdViewer) {
+    } else {
       window.MdViewer.hide();
     }
   }
 
   function updateSubmitButton() {
-    var mol2s = getMol2Files();
-    var ready = pdbInput.files[0] && mol2s.length > 0;
+    var ready;
+    if (isCyclicMode()) {
+      ready = !!(pdbInput.files[0] && cyclicInput && cyclicInput.files[0]);
+    } else {
+      ready = !!(pdbInput.files[0] && getMol2Files().length > 0);
+    }
     var loggedIn = window.WebMdAuth && window.WebMdAuth.getToken();
     btnSubmit.disabled = !ready;
     if (!loggedIn && ready) {
       submitHint.textContent = "请先登录后再提交";
+    } else if (ready) {
+      submitHint.textContent = "文件已就绪，点击提交";
+    } else if (isCyclicMode()) {
+      submitHint.textContent = "请先上传蛋白 PDB 与环肽 PDB";
     } else {
-      submitHint.textContent = ready ? "文件已就绪，点击提交" : "请先上传 PDB 与至少一个 MOL2";
+      submitHint.textContent = "请先上传 PDB 与至少一个 MOL2";
     }
   }
 
@@ -121,11 +183,16 @@
       report_interval_ps: parseFloat(document.getElementById("report-interval").value),
       ligand_add_hydrogens: document.getElementById("ligand-add-h") &&
         document.getElementById("ligand-add-h").checked ? "1" : "0",
+      is_cyclic_peptide: isCyclicMode() ? "1" : "0",
     };
   }
 
   btnSubmit.addEventListener("click", async function () {
-    if (!pdbInput.files[0] || !getMol2Files().length) return;
+    if (isCyclicMode()) {
+      if (!pdbInput.files[0] || !cyclicInput || !cyclicInput.files[0]) return;
+    } else if (!pdbInput.files[0] || !getMol2Files().length) {
+      return;
+    }
     if (window.WebMdAuth && !window.WebMdAuth.requireLogin()) return;
 
     var params = getParams();
@@ -143,7 +210,9 @@
 
     var formData = new FormData();
     formData.append("pdb_file", pdbInput.files[0]);
-    if (window.WebMD && window.WebMD.appendMol2ToFormData) {
+    if (isCyclicMode()) {
+      formData.append("cyclic_peptide_file", cyclicInput.files[0]);
+    } else if (window.WebMD && window.WebMD.appendMol2ToFormData) {
       window.WebMD.appendMol2ToFormData(formData);
     } else {
       formData.append("mol2_file", mol2Input.files[0]);
@@ -277,4 +346,5 @@
 
   window.addEventListener("storage", updateSubmitButton);
   setInterval(updateSubmitButton, 2000);
+  syncCyclicUi();
 })();

@@ -91,13 +91,35 @@ echo q | $GMX make_ndx -f "$GRO" -o to.ndx || {
   exit 1
 }
 
+# 环肽：按 webmd_cyclic_peptide.json 中残基号范围建 Ligand / Receptor / Complex
+if [ -f webmd_cyclic_peptide.json ]; then
+  CYC_A=$(python3 -c "import json;d=json.load(open('webmd_cyclic_peptide.json'));print(int(d['resid_start']))" 2>/dev/null || true)
+  CYC_B=$(python3 -c "import json;d=json.load(open('webmd_cyclic_peptide.json'));print(int(d['resid_end']))" 2>/dev/null || true)
+  if [ -n "${CYC_A:-}" ] && [ -n "${CYC_B:-}" ]; then
+    echo "检测到环肽残基号范围: ${CYC_A}-${CYC_B}"
+    PROT_ID="$(_group_id Protein)"
+    PROT_ID="${PROT_ID:-1}"
+    NXT=$(( $(_last_group_id) + 1 ))
+    {
+      echo "ri ${CYC_A}-${CYC_B}"
+      echo "name ${NXT} Ligand"
+      echo "${PROT_ID} & ! ${NXT}"
+      echo "name $((NXT+1)) Receptor"
+      echo "$((NXT+1)) | ${NXT}"
+      echo "name $((NXT+2)) Complex"
+      echo q
+    } | $GMX make_ndx -f "$GRO" -n to.ndx -o to.ndx || true
+  fi
+fi
+
 LIG_ARR=()
 while IFS= read -r _lig; do
   [ -n "$_lig" ] && LIG_ARR+=("$_lig")
 done < <(_find_lig_res)
 echo "检测到配体残基: ${LIG_ARR[*]:-（无）}"
 
-if [ "${#LIG_ARR[@]}" -gt 0 ]; then
+# 已有环肽 Ligand 时跳过小分子残基名建组
+if [ -z "$(_group_id Ligand)" ] && [ "${#LIG_ARR[@]}" -gt 0 ]; then
   # 为每个配体残基建组
   {
     for res in "${LIG_ARR[@]}"; do

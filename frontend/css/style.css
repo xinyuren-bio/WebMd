@@ -64,6 +64,19 @@ body {
   border-bottom: 1px solid var(--color-border);
 }
 
+.cyclic-peptide-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+#cyclic-peptide-hint {
+  margin: 0 0 16px;
+}
+
 /* ---- 站点顶栏公告 ---- */
 .site-announcement {
   background: #ecf6f4;

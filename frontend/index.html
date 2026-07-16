@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260715a">
+<link rel="stylesheet" href="/css/style.css?v=20260716a">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -232,9 +232,14 @@
       <div class="step-badge">1</div>
       <div>
         <h2>上传文件</h2>
-        <p class="card-subtitle">蛋白 PDB 必填；配体 MOL2 至少 1 个，最多 3 个（请在外部软件中摆好相对位置）</p>
+        <p class="card-subtitle" id="upload-subtitle">蛋白 PDB 必填；配体 MOL2 至少 1 个，最多 3 个（请在外部软件中摆好相对位置）</p>
       </div>
     </div>
+    <label class="checkbox-inline cyclic-peptide-toggle" for="is-cyclic-peptide">
+      <input type="checkbox" id="is-cyclic-peptide">
+      <span>配体为环肽（标准氨基酸，头尾成环）</span>
+    </label>
+    <p class="hint" id="cyclic-peptide-hint">勾选后请单独上传环肽 PDB（勿用 MOL2）。系统使用 ff14SB 力场并自动连接首尾 N–C 肽键；暂不支持侧链杂原子修饰。</p>
     <div class="form-row">
       <div class="form-group">
         <label for="pdb-file">蛋白 PDB 文件</label>
@@ -246,7 +251,7 @@
           </div>
         </div>
       </div>
-      <div class="form-group ligand-upload-primary">
+      <div class="form-group ligand-upload-primary" id="ligand-mol2-group">
         <label for="mol2-file"><span class="ligand-color-dot ligand-dot-1"></span>配体 1 · MOL2 <span class="ligand-tag">LIG1</span></label>
         <div class="file-input-wrapper">
           <div class="file-input-zone">
@@ -256,9 +261,19 @@
           </div>
         </div>
       </div>
+      <div class="form-group ligand-upload-primary hidden" id="ligand-cyclic-group">
+        <label for="cyclic-peptide-file"><span class="ligand-color-dot ligand-dot-1"></span>环肽 · PDB</label>
+        <div class="file-input-wrapper">
+          <div class="file-input-zone">
+            <span class="file-input-btn">选取文件</span>
+            <span class="file-name" id="cyclic-peptide-name">未选择文件</span>
+            <input type="file" id="cyclic-peptide-file" accept=".pdb" class="file-input-native">
+          </div>
+        </div>
+      </div>
     </div>
     <div id="ligand-extra-list" class="ligand-extra-list"></div>
-    <div class="ligand-upload-actions">
+    <div class="ligand-upload-actions" id="ligand-mol2-actions">
       <button type="button" class="btn btn-sm btn-secondary" id="btn-add-ligand">+ 添加配体（最多 3 个）</button>
       <p class="hint ligand-upload-hint">多配体时请在 PyMOL / ChimeraX 中预先对齐坐标后再分别导出 MOL2；提交后残基名将自动设为 LIG1、LIG2、LIG3。
         若手头是对接复合物，请先 <a class="guide-text-link" href="/#guide-prep-video">观看拆分教程视频</a>（导出 PDB + SDF，再转 MOL2 上传）。</p>
@@ -962,10 +977,10 @@
 <script src="/js/auth.js"></script>
 <script src="/js/main_tabs.js?v=20260714"></script>
 <script src="/js/ngl.js"></script>
-<script src="/js/viewer.js?v=20260714e"></script>
+<script src="/js/viewer.js?v=20260716a"></script>
 <script src="/js/payment.js"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
-<script src="/js/app.js?v=20260714c"></script>
+<script src="/js/app.js?v=20260716a"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
 </html>

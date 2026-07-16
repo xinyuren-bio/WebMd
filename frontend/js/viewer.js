@@ -663,6 +663,29 @@
     });
   }
 
+  function _finishDualPreview(comps, ligLabel) {
+    currentComp = comps[0];
+    ligandComps = comps.slice(1);
+    ligandComp = ligandComps[0] || null;
+    var nProt = currentComp.structure.atomCount;
+    var nLigTotal = ligandComps.reduce(function (s, c) {
+      return s + c.structure.atomCount;
+    }, 0);
+    logDebug(
+      "预览解析",
+      "蛋白原子=" + nProt + " | 配体数=" + ligandComps.length + " | 配体原子合计=" + nLigTotal
+    );
+    if (!nProt) {
+      throw new Error("PDB 解析后蛋白原子数为 0");
+    }
+    if (!ligandComps.length) {
+      throw new Error(ligLabel + " 解析失败");
+    }
+    sectionViewer.classList.remove("hidden");
+    setHint("预览 · 蛋白 + " + ligandComps.length + " 个" + ligLabel + "（按元素着色）");
+    applyDualStyle(styleSelect ? styleSelect.value : "cartoon-ligand");
+  }
+
   function loadFromFiles(pdbFile, mol2File) {
     var mol2Files = normalizeMol2Files(mol2File);
     if (!pdbFile || !mol2Files.length || !sectionViewer) return;
@@ -688,28 +711,7 @@
 
           Promise.all(promises)
             .then(function (comps) {
-              currentComp = comps[0];
-              ligandComps = comps.slice(1);
-              ligandComp = ligandComps[0] || null;
-              var nProt = currentComp.structure.atomCount;
-              var nLigTotal = ligandComps.reduce(function (s, c) {
-                return s + c.structure.atomCount;
-              }, 0);
-              logDebug(
-                "预览解析",
-                "蛋白原子=" + nProt + " | 配体数=" + ligandComps.length + " | 配体原子合计=" + nLigTotal
-              );
-              if (!nProt) {
-                throw new Error("PDB 解析后蛋白原子数为 0");
-              }
-              if (!ligandComps.length) {
-                throw new Error("MOL2 解析失败");
-              }
-              sectionViewer.classList.remove("hidden");
-              setHint(
-                "预览 · 蛋白 + " + ligandComps.length + " 个配体（按元素着色）"
-              );
-              applyDualStyle(styleSelect ? styleSelect.value : "cartoon-ligand");
+              _finishDualPreview(comps, "配体");
             })
             .catch(function (err) {
               var msg = formatErr(err, "本地上传预览");
@@ -719,6 +721,44 @@
             });
         } catch (err) {
           var msg2 = formatErr(err, "初始化");
+          showError(msg2);
+          setHint("可视化初始化失败");
+          logDebug("最终错误", msg2);
+        }
+      });
+    });
+  }
+
+  // 蛋白 PDB + 环肽 PDB 本地预览
+  function loadFromPdbs(proteinPdb, cyclicPdb) {
+    if (!proteinPdb || !cyclicPdb || !sectionViewer) return;
+
+    isLocalPreview = true;
+    resetDebug();
+    logDebug("预览模式", "本地上传蛋白 PDB + 环肽 PDB");
+
+    waitForNgl(function () {
+      setHint("正在加载环肽复合物…");
+
+      afterLayout(function () {
+        try {
+          var st = createStage();
+          clearComponents();
+          Promise.all([
+            st.loadFile(proteinPdb, { ext: "pdb", defaultRepresentation: false }),
+            st.loadFile(cyclicPdb, { ext: "pdb", defaultRepresentation: false }),
+          ])
+            .then(function (comps) {
+              _finishDualPreview(comps, "环肽");
+            })
+            .catch(function (err) {
+              var msg = formatErr(err, "环肽预览");
+              showError(msg);
+              setHint("预览加载失败");
+              logDebug("最终错误", msg);
+            });
+        } catch (err) {
+          var msg2 = formatErr(err, "环肽预览初始化");
           showError(msg2);
           setHint("可视化初始化失败");
           logDebug("最终错误", msg2);
@@ -767,6 +807,7 @@
   window.MdViewer = {
     load: loadStructure,
     loadFromFiles: loadFromFiles,
+    loadFromPdbs: loadFromPdbs,
     hide: hideViewer,
     hasLocalPreview: function () {
       return isLocalPreview && currentComp && ligandComps.length > 0;
