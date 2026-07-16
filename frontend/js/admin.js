@@ -3,8 +3,11 @@
 
   var keyInput = document.getElementById("admin-key");
   var btnLoad = document.getElementById("btn-load");
+  var btnLoadTasks = document.getElementById("btn-load-tasks");
+  var taskEmailInput = document.getElementById("admin-task-email");
   var content = document.getElementById("admin-content");
   var userStatsEl = document.getElementById("user-stats");
+  var userTasksEl = document.getElementById("user-tasks");
   var msgEl = document.getElementById("admin-msg-top") || document.getElementById("admin-msg");
 
   var STORAGE_KEY = "webmd_admin_key";
@@ -69,12 +72,102 @@
       });
   }
 
+  function overallTaskLabel(t) {
+    if (t.status === "failed") return "前处理失败";
+    if (t.status !== "completed") return t.status_label || "前处理中";
+    if (t.payment_status === "paid") {
+      return "已支付 · " + (t.md_status_label || t.md_status || "");
+    }
+    if (t.payment_status === "pending") return "付款待核实";
+    return "待支付";
+  }
+
+  function renderUserTasks(payload, title) {
+    if (!userTasksEl) return;
+    var list = (payload && payload.tasks) || [];
+    var total = payload && payload.total != null ? payload.total : list.length;
+    var html = "<p class=\"hint\" style=\"margin-bottom:8px;\"><strong>"
+      + (title || "任务列表")
+      + "</strong> · 共 " + total + " 条</p>";
+    if (!list.length) {
+      html += '<p class="admin-empty">该筛选下暂无任务</p>';
+      userTasksEl.innerHTML = html;
+      return;
+    }
+    html += '<table class="admin-table"><thead><tr>'
+      + "<th>Job ID</th><th>邮箱</th><th>类型</th><th>时长</th><th>状态</th><th>提交时间</th><th>操作</th>"
+      + "</tr></thead><tbody>";
+    list.forEach(function (t) {
+      var id = t.task_id || "";
+      var href = t.status_url || ("/status.html?id=" + encodeURIComponent(id));
+      var sim = t.simulation_time_ns != null ? t.simulation_time_ns + " ns" : "—";
+      html += "<tr>"
+        + "<td><code>" + id + "</code></td>"
+        + "<td>" + (t.email || "—") + "</td>"
+        + "<td>" + (t.ligand_label || t.ligand_type || "—") + "</td>"
+        + "<td>" + sim + "</td>"
+        + "<td>" + overallTaskLabel(t) + "</td>"
+        + "<td>" + formatTime(t.created_at) + "</td>"
+        + '<td><a href="' + href + '" target="_blank" rel="noopener">状态页</a></td>'
+        + "</tr>";
+    });
+    html += "</tbody></table>";
+    userTasksEl.innerHTML = html;
+  }
+
+  function loadUserTasks(userId, email) {
+    var k = getKey();
+    if (!k) {
+      showMsg("请先输入管理员密钥");
+      return;
+    }
+    var url;
+    if (userId) {
+      url = "/api/admin/users/" + encodeURIComponent(userId)
+        + "/tasks?admin_key=" + encodeURIComponent(k);
+    } else {
+      url = "/api/admin/tasks?admin_key=" + encodeURIComponent(k)
+        + "&limit=100";
+      if (email) url += "&email=" + encodeURIComponent(email);
+    }
+    if (userTasksEl) {
+      userTasksEl.innerHTML = '<p class="admin-empty">加载中…</p>';
+    }
+    fetch(url)
+      .then(function (r) {
+        if (!r.ok) {
+          return r.json().then(function (e) {
+            throw new Error(apiDetail(e) || "加载任务失败");
+          });
+        }
+        return r.json();
+      })
+      .then(function (data) {
+        var title = "全部任务";
+        if (data.user && data.user.email) {
+          title = "用户 " + data.user.email + " 的任务";
+        } else if (email) {
+          title = "邮箱 " + email + " 的任务";
+        }
+        renderUserTasks(data, title);
+        showMsg(title + " · " + (data.total || 0) + " 条", true);
+      })
+      .catch(function (err) {
+        if (userTasksEl) {
+          userTasksEl.innerHTML = '<p class="admin-empty">' + (err.message || "加载失败") + "</p>";
+        }
+        showMsg(err.message || "加载失败");
+      });
+  }
+
   function renderUserStats(data) {
     if (!userStatsEl) return;
     var total = data.total != null ? data.total : 0;
     var recent = data.recent || [];
     var html = '<div class="stat-cards">'
       + '<div class="stat-card"><div class="label">累计注册用户</div><div class="value">' + total + "</div></div>"
+      + '<div class="stat-card"><div class="label">任务总数</div><div class="value">'
+      + (data.tasks_total != null ? data.tasks_total : "—") + "</div></div>"
       + "</div>";
 
     html += '<h2 class="admin-section-title">最近注册用户</h2>';
@@ -82,13 +175,18 @@
       html += '<p class="admin-empty">暂无注册用户</p>';
     } else {
       html += '<table class="admin-table"><thead><tr>'
-        + "<th>邮箱</th><th>用户 ID</th><th>完成模拟数</th><th>注册时间</th>"
+        + "<th>邮箱</th><th>用户 ID</th><th>任务数</th><th>完成模拟数</th><th>注册时间</th><th>操作</th>"
         + "</tr></thead><tbody>";
       recent.forEach(function (u) {
+        var uid = u.user_id || "";
         html += "<tr><td>" + (u.email || "—") + "</td><td><code>"
-          + (u.user_id || "—") + "</code></td><td>"
+          + uid + "</code></td><td>"
+          + (u.task_count != null ? u.task_count : 0)
+          + "</td><td>"
           + (u.md_completed != null ? u.md_completed : 0)
-          + "</td><td>" + formatTime(u.created_at) + "</td></tr>";
+          + "</td><td>" + formatTime(u.created_at) + "</td>"
+          + '<td><button type="button" class="btn btn-sm btn-secondary btn-view-user-tasks" data-uid="'
+          + uid + '" data-email="' + (u.email || "") + '">查看任务</button></td></tr>';
       });
       html += "</tbody></table>";
     }
@@ -107,6 +205,12 @@
         + "</div>";
     }
     userStatsEl.innerHTML = html;
+
+    userStatsEl.querySelectorAll(".btn-view-user-tasks").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        loadUserTasks(btn.getAttribute("data-uid") || "", btn.getAttribute("data-email") || "");
+      });
+    });
   }
 
   function apiDetail(e) {
@@ -340,6 +444,12 @@
   }
 
   if (btnLoad) btnLoad.addEventListener("click", loadPending);
+  if (btnLoadTasks) {
+    btnLoadTasks.addEventListener("click", function () {
+      var em = taskEmailInput ? taskEmailInput.value.trim() : "";
+      loadUserTasks("", em);
+    });
+  }
 
   try {
     var saved = localStorage.getItem(STORAGE_KEY);

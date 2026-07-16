@@ -27,7 +27,7 @@ from config import (
 from payment_util import calc_payment_amount, verify_admin_key, price_for_sim_ns, qr_urls_for_sim_ns
 from analytics_util import record_visit, get_analytics_stats, collect_md_completion_stats
 from email_util import send_admin_payment_notify, send_admin_need_autodl_notify, send_admin_md_completed_notify, send_user_md_completed_notify
-from user_store import get_user_by_id, count_users, list_recent_users
+from user_store import get_user_by_id, get_user_by_email, count_users, list_recent_users
 from config import USERS_DB
 from api.deps import get_current_user
 from models import Task, TaskStatus, tasks
@@ -1024,12 +1024,86 @@ async def admin_users_stats(admin_key: str = ""):
     db = Path(USERS_DB)
     md = collect_md_completion_stats(tasks.values())
     per_user = md.get("md_per_user") or {}
+    # 每用户任务数（含未支付/失败）
+    task_counts: dict[str, int] = {}
+    for t in tasks.values():
+        if t.user_id:
+            task_counts[t.user_id] = task_counts.get(t.user_id, 0) + 1
     recent = list_recent_users(db, limit=50)
     for u in recent:
-        u["md_completed"] = int(per_user.get(u.get("user_id", ""), 0))
+        uid = u.get("user_id", "")
+        u["md_completed"] = int(per_user.get(uid, 0))
+        u["task_count"] = int(task_counts.get(uid, 0))
     return {
         "total": count_users(db),
         "recent": recent,
         "md_completed_total": md.get("md_completed_total", 0),
         "md_by_ns": md.get("md_by_ns", {}),
+        "tasks_total": len(tasks),
+    }
+
+
+@router.get("/admin/users/{user_id}/tasks")
+async def admin_user_tasks(
+    user_id: str,
+    admin_key: str = "",
+    limit: int = Query(default=200, ge=1, le=500),
+):
+    """管理员：查看指定注册用户提交的全部任务。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+    u = get_user_by_id(Path(USERS_DB), user_id)
+    if not u:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    mine = [t for t in tasks.values() if t.user_id == user_id]
+    mine.sort(key=lambda t: t.created_at or 0.0, reverse=True)
+    items = [_task_list_item(t) for t in mine[:limit]]
+    for it in items:
+        it["user_id"] = user_id
+        it["email"] = u.get("email", "")
+    return {
+        "user": {
+            "user_id": u.get("user_id"),
+            "email": u.get("email"),
+            "created_at": u.get("created_at"),
+        },
+        "tasks": items,
+        "total": len(mine),
+    }
+
+
+@router.get("/admin/tasks")
+async def admin_list_tasks(
+    admin_key: str = "",
+    limit: int = Query(default=100, ge=1, le=500),
+    email: str = Query(default=""),
+    user_id: str = Query(default=""),
+):
+    """管理员：任务总览（可按邮箱或用户 ID 筛选）。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+    db = Path(USERS_DB)
+    uid_filter = (user_id or "").strip()
+    email_q = (email or "").strip().lower()
+    if email_q and not uid_filter:
+        found = get_user_by_email(db, email_q)
+        if not found:
+            return {"tasks": [], "total": 0, "filter": {"email": email_q}}
+        uid_filter = found["user_id"]
+
+    items_src = list(tasks.values())
+    if uid_filter:
+        items_src = [t for t in items_src if t.user_id == uid_filter]
+    items_src.sort(key=lambda t: t.created_at or 0.0, reverse=True)
+    out = []
+    for t in items_src[:limit]:
+        row = _task_list_item(t)
+        row["user_id"] = t.user_id
+        u = get_user_by_id(db, t.user_id) if t.user_id else None
+        row["email"] = (u or {}).get("email", "")
+        out.append(row)
+    return {
+        "tasks": out,
+        "total": len(items_src),
+        "filter": {"user_id": uid_filter, "email": email_q},
     }

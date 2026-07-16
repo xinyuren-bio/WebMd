@@ -39,6 +39,15 @@
       <button type="button" class="btn btn-primary" id="btn-load">刷新数据</button>
     </div>
     <div id="user-stats"></div>
+    <h2 class="admin-section-title">用户任务</h2>
+    <p class="hint" style="margin-bottom:0.75rem;">在上方用户表点击「查看任务」，或按邮箱筛选全部任务。</p>
+    <div class="admin-key-row" style="margin-top:0;">
+      <input type="text" id="admin-task-email" placeholder="按邮箱筛选（可选）" autocomplete="off">
+      <button type="button" class="btn btn-secondary" id="btn-load-tasks">查看任务</button>
+    </div>
+    <div id="user-tasks">
+      <p class="admin-empty">刷新数据后，可点击用户「查看任务」</p>
+    </div>
     <h2 class="admin-section-title">待核实支付</h2>
     <div id="admin-content">
       <p class="admin-empty">请输入密钥并刷新列表</p>
@@ -51,6 +60,6 @@
     </div>
     <p class="admin-msg hidden" id="admin-msg"></p>
   </div>
-  <script src="/js/admin.js?v=20260716g"></script>
+  <script src="/js/admin.js?v=20260716m"></script>
 </body>
 </html>
