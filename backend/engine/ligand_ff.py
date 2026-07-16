@@ -117,6 +117,32 @@ def _parse_mol2(p: Path) -> dict:
     }
 
 
+def _split_frcmod_data_line(s: str) -> tuple[str, list[float], str] | None:
+    """拆分 frcmod 参数行：原子类型串（可含空格）+ 数值 + 注释。
+
+    Amber 原子类型常为 2 字符（如 ``c ``），类型串形如 ``c -c1-c2``，
+    不可用单纯 ``split()``，否则会把 ``-c1-c2`` 误当作数值。
+    """
+    m = re.match(
+        r"^(?P<typ>.+?)\s+"
+        r"(?P<nums>(?:-?\d+(?:\.\d*)?(?:[Ee][+-]?\d+)?(?:\s+|$))+)"
+        r"(?P<cmt>.*)$",
+        s.strip(),
+    )
+    if not m:
+        return None
+    typ = m.group("typ").strip()
+    nums_raw = m.group("nums").strip()
+    cmt = m.group("cmt").strip()
+    try:
+        nums = [float(x) for x in nums_raw.split()]
+    except ValueError:
+        return None
+    if not typ or not nums:
+        return None
+    return typ, nums, cmt
+
+
 def _parse_frcmod(p: Path) -> dict:
     """解析 frcmod 中的键、角、二面角、异常二面角参数。"""
     data: dict[str, list] = {k.lower(): [] for k in _FRCMOD_SECTIONS}
@@ -134,40 +160,54 @@ def _parse_frcmod(p: Path) -> dict:
             if section is None or section == "MASS" or section == "NONBON":
                 continue
 
-            parts = s.split()
-            if len(parts) < 3:
+            parsed = _split_frcmod_data_line(s)
+            if not parsed:
+                logger.debug("跳过无法解析的 frcmod 行 [%s]: %s", section, s)
                 continue
-
-            typ = parts[0]
-            comment = " ".join(parts[3:]) if len(parts) > 3 else ""
+            typ, nums, comment = parsed
 
             if section == "BOND":
+                if len(nums) < 2:
+                    continue
                 data["bond"].append({
                     "type": typ,
-                    "k": float(parts[1]),
-                    "r0": float(parts[2]),
+                    "k": nums[0],
+                    "r0": nums[1],
                     "comment": comment,
                 })
             elif section == "ANGLE":
+                if len(nums) < 2:
+                    continue
                 data["angle"].append({
                     "type": typ,
-                    "k": float(parts[1]),
-                    "theta0": float(parts[2]),
+                    "k": nums[0],
+                    "theta0": nums[1],
                     "comment": comment,
                 })
             elif section in ("DIHE", "IMPROPER"):
                 key = "dihe" if section == "DIHE" else "improper"
-                entry = {
-                    "type": typ,
-                    "comment": comment,
-                }
-                if len(parts) >= 4:
-                    entry["v1"] = float(parts[1])
-                    entry["n"] = float(parts[2])
-                    entry["gamma"] = float(parts[3])
+                entry: dict = {"type": typ, "comment": comment}
+                if section == "DIHE" and len(nums) >= 4:
+                    # divider, PK, phase, periodicity
+                    entry["divider"] = nums[0]
+                    entry["v1"] = nums[1]
+                    entry["gamma"] = nums[2]
+                    entry["n"] = nums[3]
+                elif len(nums) >= 3:
+                    entry["v1"] = nums[0]
+                    entry["gamma"] = nums[1]
+                    entry["n"] = nums[2]
                 data[key].append(entry)
 
     return data
+
+
+def _match_type_pattern(types: list[str], pattern: str) -> bool:
+    """判断原子类型序列是否匹配 frcmod 类型模板（如 c1-c2-n2、c -c1-c2）。"""
+    pts = [p for p in (x.strip() for x in pattern.split("-")) if p]
+    if len(pts) != len(types):
+        return False
+    return all(t.strip() == p for t, p in zip(types, pts))
 
 
 def _build_adjacency(bonds: list[dict]) -> dict[int, set[int]]:
@@ -178,14 +218,6 @@ def _build_adjacency(bonds: list[dict]) -> dict[int, set[int]]:
         adj.setdefault(a, set()).add(c)
         adj.setdefault(c, set()).add(a)
     return adj
-
-
-def _match_type_pattern(types: list[str], pattern: str) -> bool:
-    """判断原子类型序列是否匹配 frcmod 类型模板（如 c1-c2-n2）。"""
-    pts = pattern.split("-")
-    if len(pts) != len(types):
-        return False
-    return all(t == p for t, p in zip(types, pts))
 
 
 def _assign_instanced_terms(mol: dict, frc: dict) -> None:
@@ -202,17 +234,17 @@ def _assign_instanced_terms(mol: dict, frc: dict) -> None:
     angle_instances: list[dict] = []
     seen_ang: set[tuple] = set()
     for entry in frc.get("angle", []):
-        pts = entry["type"].split("-")
+        pts = [p for p in (x.strip() for x in entry["type"].split("-")) if p]
         if len(pts) != 3:
             continue
         for j, neighbors in adj.items():
-            if atom_type(j) != pts[1]:
+            if atom_type(j).strip() != pts[1]:
                 continue
             for i in neighbors:
-                if atom_type(i) != pts[0]:
+                if atom_type(i).strip() != pts[0]:
                     continue
                 for k in neighbors:
-                    if k == i or atom_type(k) != pts[2]:
+                    if k == i or atom_type(k).strip() != pts[2]:
                         continue
                     key = (min(i, k), j, max(i, k))
                     if key in seen_ang:
@@ -233,17 +265,17 @@ def _assign_instanced_terms(mol: dict, frc: dict) -> None:
     dihe_instances: list[dict] = []
     seen_dih: set[tuple] = set()
     for entry in frc.get("dihe", []):
-        pts = entry["type"].split("-")
+        pts = [p for p in (x.strip() for x in entry["type"].split("-")) if p]
         if len(pts) != 4:
             continue
         for b in bonds:
             j, k = b["atom1"], b["atom2"]
             for j2, k2 in ((j, k), (k, j)):
                 for i in adj.get(j2, []):
-                    if i == k2 or atom_type(i) != pts[0]:
+                    if i == k2 or atom_type(i).strip() != pts[0]:
                         continue
                     for l in adj.get(k2, []):
-                        if l == j2 or atom_type(l) != pts[3]:
+                        if l == j2 or atom_type(l).strip() != pts[3]:
                             continue
                         types = [atom_type(i), atom_type(j2), atom_type(k2), atom_type(l)]
                         if not _match_type_pattern(types, entry["type"]):
@@ -273,7 +305,7 @@ def _assign_instanced_terms(mol: dict, frc: dict) -> None:
     improper_instances: list[dict] = []
     seen_imp: set[tuple] = set()
     for entry in frc.get("improper", []):
-        pts = entry["type"].split("-")
+        pts = [p for p in (x.strip() for x in entry["type"].split("-")) if p]
         if len(pts) != 4:
             continue
         ids = [a["id"] for a in atoms]

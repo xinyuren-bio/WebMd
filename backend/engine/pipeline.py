@@ -128,7 +128,11 @@ def run_pipeline(
             }
             for x in ligand_list
         ]
-        ligand_ff.export_ligand_forcefield_json(work_dir)
+        try:
+            ligand_ff.export_ligand_forcefield_json(work_dir)
+        except Exception as e:
+            # 可视化 JSON 失败不应中断体系构建
+            logger.warning("导出配体力场 JSON 失败（已忽略，继续构建）: %s", e)
         # 人类可读力场说明（随结果包下载）
         lines = ["WebMD 小分子力场说明", "==================", ""]
         for x in ligand_list:
