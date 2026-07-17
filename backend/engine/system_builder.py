@@ -2,7 +2,7 @@
 # 功能说明：tleap 构建 Amber 溶剂化体系，acpype 转换为 GROMACS 拓扑
 # 使用方法：由 pipeline 调用 build_full_system / convert_to_gromacs
 # 依赖环境：AmberTools (tleap) + acpype (pip install acpype)
-# 生成时间：2026-07-16（断链 TER / tleap 诊断）
+# 生成时间：2026-07-17（两阶段 saveOff/loadOff 加盐）
 # ==================================================
 
 import logging
@@ -146,6 +146,7 @@ prot = loadpdb {protein_pdb}
 
 complex = combine {{ prot {ligand_vars} }}
 solvatebox complex TIP3PBOX {box_padding}
+saveOff complex {solv_off}
 saveamberparm complex {prmtop} {inpcrd}
 quit
 """
@@ -160,6 +161,7 @@ bond cyc.{resid_start}.N cyc.{resid_end}.C
 
 complex = combine {{ prot cyc }}
 solvatebox complex TIP3PBOX {box_padding}
+saveOff complex {solv_off}
 saveamberparm complex {prmtop} {inpcrd}
 quit
 """
@@ -173,23 +175,29 @@ pep = loadpdb {peptide_pdb}
 
 complex = combine {{ prot pep }}
 solvatebox complex TIP3PBOX {box_padding}
+saveOff complex {solv_off}
 saveamberparm complex {prmtop} {inpcrd}
 quit
 """
 
-# 第二阶段：加载已溶剂化体系，先中和再加额外盐对（不重新 solvatebox）
+# 第二阶段：本机 teLeap 无 loadAmberParm，用 saveOff/loadOff 复用同一溶剂化 unit
+# loadOff 后 unit 名仍为 complex；须重新 loadamberparams，否则 GAFF 角参数会丢失
 TLEAP_TEMPLATE_ADD_IONS = """\
 source leaprc.protein.ff14SB
 source leaprc.gaff2
 source leaprc.water.tip3p
+{ligand_param_lines}
 
-complex = loadamberparm {solv_prmtop} {solv_inpcrd}
+loadoff {solv_off}
 addions complex Cl- 0
 addions complex {cation} 0
 {salt_line}
 saveamberparm complex {prmtop} {inpcrd}
 quit
 """
+
+# 第一阶段写出的 OFF 库名（第二阶段 loadoff 读入）
+_SOLVATED_OFF = "solvated.lib"
 
 # 兼容旧名（避免外部引用断裂）
 TLEAP_TEMPLATE_BASE = TLEAP_TEMPLATE_SOLVATE_MOL2
@@ -308,23 +316,32 @@ def _write_stage1_mol2_script(
         ligand_param_lines="\n".join(param_lines),
         ligand_vars=" ".join(var_names),
         box_padding=box_padding,
+        solv_off=_SOLVATED_OFF,
         prmtop=solv_prmtop,
         inpcrd=solv_inpcrd,
     )
 
 
+def _ligand_frcmod_lines(ligands: list[dict] | None) -> str:
+    """生成第二阶段需重新加载的 frcmod 行（肽体系可为空）。"""
+    if not ligands:
+        return ""
+    lines = [f"loadamberparams {lg['frcmod']}" for lg in ligands if lg.get("frcmod")]
+    return "\n".join(lines)
+
+
 def _write_stage2_ions_script(
-    solv_prmtop: str,
-    solv_inpcrd: str,
     cation: str,
     n_pair: int,
     prmtop: str,
     inpcrd: str,
+    ligand_param_lines: str = "",
 ) -> str:
     """生成第二阶段（中和 + 额外盐对）tleap 脚本。"""
+    params = ligand_param_lines.strip()
     return TLEAP_TEMPLATE_ADD_IONS.format(
-        solv_prmtop=solv_prmtop,
-        solv_inpcrd=solv_inpcrd,
+        ligand_param_lines=(params + "\n") if params else "",
+        solv_off=_SOLVATED_OFF,
         cation=cation,
         salt_line=_salt_line_extra_pairs(cation, n_pair),
         prmtop=prmtop,
@@ -338,6 +355,7 @@ def _two_stage_solvate_and_ions(
     *,
     ion_conc: float,
     salt_type: str,
+    ligand_param_lines: str = "",
 ) -> tuple[Path, Path]:
     """执行两阶段 tleap：溶剂化 → 按实际盒体积加盐，返回最终 prmtop/inpcrd。"""
     salt = _normalize_salt_type(salt_type)
@@ -364,7 +382,8 @@ def _two_stage_solvate_and_ions(
     )
 
     stage2 = _write_stage2_ions_script(
-        solv_prmtop.name, solv_inpcrd.name, cation, plan.n_pair, prmtop.name, inpcrd.name,
+        cation, plan.n_pair, prmtop.name, inpcrd.name,
+        ligand_param_lines=ligand_param_lines,
     )
     tleap2 = work / "tleap_stage2_ions.in"
     tleap2.write_text(stage2, encoding="utf-8")
@@ -560,6 +579,7 @@ def build_full_system_cyclic(
         resid_start=int(cyclic_meta["resid_start"]),
         resid_end=int(cyclic_meta["resid_end"]),
         box_padding=box_padding,
+        solv_off=_SOLVATED_OFF,
         prmtop="solvated.prmtop",
         inpcrd="solvated.inpcrd",
     )
@@ -591,6 +611,7 @@ def build_full_system_linear(
         protein_pdb=Path(clean_pdb).name,
         peptide_pdb=pep_name,
         box_padding=box_padding,
+        solv_off=_SOLVATED_OFF,
         prmtop="solvated.prmtop",
         inpcrd="solvated.inpcrd",
     )
@@ -778,6 +799,7 @@ def build_full_system(
     )
     prmtop, inpcrd = _two_stage_solvate_and_ions(
         work, stage1, ion_conc=ion_conc, salt_type=salt_type,
+        ligand_param_lines=_ligand_frcmod_lines(leap_ligands),
     )
     return str(prmtop), str(inpcrd)
 
