@@ -97,10 +97,12 @@ grep -E ' HD2 .*ASP | HC  .*ARG ' protein_clean.pdb
 
 | 项 | 内容 |
 |----|------|
-| 症状 | N 端无名类型原子；或 saveAmberParm FATAL |
-| 原因 | OpenMM/PDBFixer 写 `H/H2/H3`，Amber N* 要 `H1/H2/H3` |
-| 处理 | `_fix_terminal_atoms_for_tleap`：存在 H2+H3 且无 H1 时，将 H/HN/HT1 → H1；HT1/2/3 → H1/2/3 |
+| 症状 | N 端无名类型原子；或 `FATAL: Atom .R<NASP n>.A<H …> does not have a type` |
+| 原因 | OpenMM/PDBFixer/肽重建写 `H/H2/H3`，Amber N*（如 NASP）要 `H1/H2/H3` |
+| 处理 | `_fix_terminal_atoms_for_tleap`：存在 H2+H3 且无 H1 时，将 H/HN/HT1 → H1；HT1/2/3 → H1/2/3。蛋白在 `_clean_pdb_for_tleap`；**线形肽**在 `prepare_linear_peptide` 与 `build_full_system_linear` 同样调用 |
 | 禁忌 | 不要在无 H2/H3 时盲目把酰胺 H 改成 H1 |
+| 案例任务 | ed41ec228f8d（线形肽 N 端 ASP→NASP 残留 H） |
+| 日期 | 2026-07-17 |
 
 ---
 

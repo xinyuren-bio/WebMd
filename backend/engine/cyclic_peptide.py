@@ -2,7 +2,7 @@
 # 功能说明：标准氨基酸环肽/线形肽的 PDB 校验、清理与 tleap 准备
 # 使用方法：pipeline 调用 prepare_cyclic_peptide / prepare_linear_peptide
 # 依赖环境：Python 标准库；组氨酸命名复用 protein._fix_histidine_protonation
-# 生成时间：2026-07-16（UFF 原子名修复 / PDB 列格式）
+# 生成时间：2026-07-17（线形肽 N 端 H→H1）
 # ==================================================
 
 from __future__ import annotations
@@ -253,6 +253,16 @@ def prepare_linear_peptide(
     clean_path.write_text("".join(out_lines), encoding="utf-8")
 
     _fix_histidine_protonation(str(clean_path))
+    # N 端 H/H2/H3 → H1/H2/H3（与蛋白 _fix_terminal_atoms_for_tleap 一致）
+    from .system_builder import _fix_terminal_atoms_for_tleap
+
+    pep_lines = clean_path.read_text(encoding="utf-8", errors="replace").splitlines(
+        keepends=True
+    )
+    clean_path.write_text(
+        "".join(_fix_terminal_atoms_for_tleap(pep_lines)),
+        encoding="utf-8",
+    )
     assert_peptide_amber_names(clean_path)
 
     residues2 = _parse_residues(clean_path)

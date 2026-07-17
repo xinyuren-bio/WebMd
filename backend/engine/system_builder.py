@@ -606,6 +606,12 @@ def build_full_system_linear(
     pep_dst = work / pep_name
     if pep_src != pep_dst.resolve():
         shutil.copy(str(pep_src), str(pep_dst))
+    # 线形肽 N 端：PDBFixer/重建常写 H/H2/H3，Amber NASP 要 H1/H2/H3，否则 FATAL
+    pep_lines = pep_dst.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    pep_dst.write_text(
+        "".join(_fix_terminal_atoms_for_tleap(pep_lines)),
+        encoding="utf-8",
+    )
 
     stage1 = TLEAP_TEMPLATE_SOLVATE_LINEAR.format(
         protein_pdb=Path(clean_pdb).name,
