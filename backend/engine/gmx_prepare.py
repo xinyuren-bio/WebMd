@@ -582,11 +582,13 @@ def sync_gro_order_and_names_with_top(work_dir: str | Path) -> None:
     if leftover:
         raise RuntimeError(f"重排 gro 后仍有 {leftover} 个未归类原子")
 
-    # 重编号原子序号（列 16–20）
+    # 重编号原子序号（列 16–20；GRO 固定 5 列，须对 100000 取模，否则 >99999 会撑破坐标列）
     renum: list[str] = []
     for i, line in enumerate(out_atoms, 1):
         if len(line) >= 20:
-            renum.append(line[:15] + f"{i:5d}" + line[20:])
+            # 与 gmx/acpype 一致：100000 → 0，100001 → 1 …
+            anr = i % 100000
+            renum.append(line[:15] + f"{anr:5d}" + line[20:])
         else:
             renum.append(line)
 

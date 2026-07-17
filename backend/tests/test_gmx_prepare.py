@@ -160,3 +160,23 @@ def test_mdp_nsteps_and_pcoupl(tmp_path: Path) -> None:
     assert "-r nvt.gro" in run
     assert "-n index.ndx" in run
     assert "-maxwarn" not in run
+
+
+def test_gro_atom_serial_wraps_at_100000() -> None:
+    """GRO 原子序号为固定 5 列，须对 100000 取模，否则 grompp 报 coordinate formatting。"""
+    # 与 gmx_prepare.sync_gro_order_and_names_with_top 重编号规则一致
+    cases = [
+        (1, "    1"),
+        (99999, "99999"),
+        (100000, "    0"),
+        (100001, "    1"),
+        (109769, " 9769"),
+    ]
+    for i, expect in cases:
+        assert f"{i % 100000:5d}" == expect
+        line = "29521  WAT   H1    0   0.934   7.917   5.171"
+        out = line[:15] + f"{i % 100000:5d}" + line[20:]
+        assert len(out) == 44
+        float(out[20:28])
+        float(out[28:36])
+        float(out[36:44])
