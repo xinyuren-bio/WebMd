@@ -176,16 +176,36 @@ def run_pipeline(
     # 4. acpype 转换为 GROMACS 拓扑
     status_callback("converting_gmx")
     system_builder.convert_to_gromacs(prmtop, inpcrd, work_dir)
+    system_builder.finalize_salt_report_from_gmx(work_dir)
     logger.info("[4/5] GROMACS 拓扑转换完成")
 
     gro = work / "system.gro"
     if gro.exists():
         structure_export.export_complex_pdb(str(gro), str(work / "complex.pdb"))
 
-    # 5. 生成 GROMACS mdp 与运行脚本
+    # 配体残基名（用于 index / 约束归类）
+    ligand_resnames: list[str] = []
+    for x in (params.get("ligands") or []):
+        rn = str(x.get("resname") or "").strip()
+        if rn:
+            ligand_resnames.append(rn)
+    # 肽视作溶质的一部分（并入 Protein_Ligand）
+    if is_cyc or is_lin:
+        ligand_resnames = ligand_resnames  # 肽原子已在合并拓扑溶质 moleculetype 中
+
+    # 5. 生成 GROMACS mdp / index / POSRES，并 grompp 验收
     status_callback("generating_mdp")
+    # 默认平衡时长写入 params，保证可追溯
+    params.setdefault("nvt_time_ps", 500.0)
+    params.setdefault("npt_time_ps", 1000.0)
+    params.setdefault("tau_p", 5.0)
     simulation.generate_gromacs_inputs(work_dir, params)
-    logger.info("[5/5] GROMACS 输入文件已生成")
+    from .gmx_prepare import prepare_gmx_equilibration
+    prep_info = prepare_gmx_equilibration(
+        work_dir, ligand_resnames, run_grompp_check=True,
+    )
+    params["gmx_prep"] = prep_info
+    logger.info("[5/5] GROMACS 输入文件已生成并完成 grompp 验收")
 
     status_callback("packaging")
     output_tar = work / "md_simulation_package.tar.gz"

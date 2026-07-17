@@ -262,6 +262,49 @@ def _acpype_usable(env: dict) -> bool:
         return False
 
 
+def parse_gmx_version(text: str) -> tuple[int, int] | None:
+    """从 gmx --version 输出解析主次版本号，如 (2025, 4)。"""
+    import re
+    m = re.search(r"GROMACS\s+version:\s*(\d+)\.(\d+)", text, re.I)
+    if not m:
+        m = re.search(r"gmx,\s*(\d+)\.(\d+)", text, re.I)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def get_gmx_version() -> tuple[int, int] | None:
+    """运行 gmx --version 并返回 (major, minor)。"""
+    env = tool_env()
+    try:
+        cmd = resolve_tool_cmd("gmx") + ["--version"]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
+        out = (r.stdout or "") + (r.stderr or "")
+        return parse_gmx_version(out)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def require_c_rescale_support() -> None:
+    """确认当前 GROMACS 支持 pcoupl=C-rescale（自 2020 起）。
+
+    若不支持则明确报错，禁止静默改回 Parrinello-Rahman。
+    """
+    ver = get_gmx_version()
+    if ver is None:
+        raise RuntimeError(
+            "无法解析 GROMACS 版本，无法确认是否支持 C-rescale。"
+            "请安装 GROMACS ≥ 2020，或设置 PATH 使 gmx --version 可用。"
+        )
+    major, minor = ver
+    if major < 2020:
+        raise RuntimeError(
+            f"当前 GROMACS {major}.{minor} 不支持 pcoupl=C-rescale（需 ≥ 2020）。"
+            "NPT 平衡已配置为 C-rescale，禁止静默回退算法；请升级 GROMACS。"
+        )
+    logger.info("GROMACS %d.%d 支持 C-rescale", major, minor)
+
+
 def _generic_usable(c: str, env: dict) -> bool:
     try:
         r = subprocess.run(
@@ -291,6 +334,8 @@ def check_external_tools() -> None:
             bad.append("tleap")
         if "acpype" not in miss and not _acpype_usable(e):
             bad.append("acpype")
+        if "gmx" not in miss and not _generic_usable("gmx", e):
+            bad.append("gmx")
         ah = _find_amberhome()
         if ah and not (ah / "bin" / "teLeap").is_file() and "teLeap" not in bad:
             bad.append("teLeap")
@@ -332,3 +377,5 @@ def check_external_tools() -> None:
         raise RuntimeError("\n".join(parts))
 
     logger.info("外部工具检测通过: %s", ", ".join(_REQUIRED_CMDS))
+    # NPT 使用 C-rescale，版本不足时明确失败
+    require_c_rescale_support()

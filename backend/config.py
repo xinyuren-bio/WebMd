@@ -36,11 +36,11 @@ DEFAULT_PARAMS = {
     "constraints": "HBonds",      # GROMACS 约束: h-bonds / all-bonds / h-angles
     "nonbonded_cutoff": 1.0,      # nm
     "tau_t": 0.1,                 # 温控耦合时间 (ps)
-    "tau_p": 2.0,                 # 压控耦合时间 (ps)
-    "nvt_time_ps": 50.0,          # NVT 平衡时长 (ps)
-    "npt_time_ps": 50.0,          # NPT 平衡时长 (ps)
+    "tau_p": 5.0,                 # 压控耦合时间 (ps)；NPT 用 C-rescale，生产用 PR
+    "nvt_time_ps": 500.0,         # NVT 平衡时长 (ps)
+    "npt_time_ps": 1000.0,        # NPT 平衡时长 (ps)
     "box_padding": 10.0,          # 溶剂盒子边距 (Å)
-    "ion_conc": 0.15,             # 离子浓度 (mol/L)
+    "ion_conc": 0.15,             # 中和后额外一价盐对目标浓度 (mol/L)
     "salt_type": "nacl",          # 背景盐种类：nacl / kcl
     "ligand_add_hydrogens": True, # 配体 antechamber 前自动补氢
 }

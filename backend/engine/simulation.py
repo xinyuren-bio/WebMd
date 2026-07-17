@@ -1,8 +1,8 @@
 # ==================================================
 # 功能说明：生成 GROMACS mdp 参数文件与一键运行脚本 run_md.sh
 # 使用方法：由 pipeline 调用 generate_gromacs_inputs(work_dir, params)
-# 依赖环境：GROMACS (gmx 命令)
-# 生成时间：2026-06-23
+# 依赖环境：GROMACS (gmx 命令；NPT 需支持 C-rescale，通常 ≥2020)
+# 生成时间：2026-07-17
 # ==================================================
 
 import logging
@@ -34,7 +34,8 @@ pbc         = xyz
 """
 
 NVT_MDP = """\
-; NVT 平衡
+; NVT 平衡（默认 500 ps；溶质重原子位置约束）
+define      = -DPOSRES
 integrator  = md
 nsteps      = {nvt_steps}
 dt          = {dt}
@@ -53,9 +54,10 @@ constraints = {constraints}
 constraint-algorithm = lincs
 lincs-order = 4
 tcoupl      = V-rescale
-tc-grps     = System
-tau-t       = {tau_t}
-ref-t       = {temperature}
+tc-grps     = Protein_Ligand Water_and_ions
+tau-t       = {tau_t} {tau_t}
+ref-t       = {temperature} {temperature}
+pcoupl      = no
 gen-vel     = yes
 gen-temp    = {temperature}
 gen-seed    = -1
@@ -63,7 +65,8 @@ nstcheckpoint = 5000
 """
 
 NPT_MDP = """\
-; NPT 平衡
+; NPT 平衡（默认 1000 ps；C-rescale；溶质重原子位置约束）
+define      = -DPOSRES
 integrator  = md
 nsteps      = {npt_steps}
 dt          = {dt}
@@ -82,10 +85,10 @@ constraints = {constraints}
 constraint-algorithm = lincs
 lincs-order = 4
 tcoupl      = V-rescale
-tc-grps     = System
-tau-t       = {tau_t}
-ref-t       = {temperature}
-pcoupl      = Parrinello-Rahman
+tc-grps     = Protein_Ligand Water_and_ions
+tau-t       = {tau_t} {tau_t}
+ref-t       = {temperature} {temperature}
+pcoupl      = C-rescale
 pcoupltype  = isotropic
 tau-p       = {tau_p}
 ref-p       = {pressure}
@@ -96,7 +99,7 @@ nstcheckpoint = 5000
 """
 
 MD_MDP = """\
-; 生产 MD
+; 生产 MD（无 POSRES；Parrinello-Rahman）
 integrator  = md
 nsteps      = {prod_steps}
 dt          = {dt}
@@ -114,9 +117,9 @@ constraints = {constraints}
 constraint-algorithm = lincs
 lincs-order = 4
 tcoupl      = V-rescale
-tc-grps     = System
-tau-t       = {tau_t}
-ref-t       = {temperature}
+tc-grps     = Protein_Ligand Water_and_ions
+tau-t       = {tau_t} {tau_t}
+ref-t       = {temperature} {temperature}
 pcoupl      = Parrinello-Rahman
 pcoupltype  = isotropic
 tau-p       = {tau_p}
@@ -128,26 +131,32 @@ gen-vel     = no
 
 RUN_SCRIPT = """\
 #!/bin/bash
-# GROMACS 模拟一键运行脚本（由 MD 体系搭建工具自动生成）
+# GROMACS 模拟一键运行脚本（由 WebMD 自动生成）
+# 要求：system.top 已含 POSRES、存在 index.ndx 与 posre_*.itp
 set -euo pipefail
 
 export PATH="/usr/local/gromacs/bin:${PATH}"
 GMX="${GMX:-gmx}"
 
+if [[ ! -f index.ndx ]]; then
+  echo "错误：缺少 index.ndx（温控组 Protein_Ligand / Water_and_ions）" >&2
+  exit 1
+fi
+
 echo "=== [1/4] 能量最小化 ==="
-$GMX grompp -f mdp/em.mdp -c system.gro -p system.top -o em.tpr -maxwarn 2
+$GMX grompp -f mdp/em.mdp -c system.gro -p system.top -n index.ndx -o em.tpr
 $GMX mdrun -v -deffnm em -ntmpi 1
 
-echo "=== [2/4] NVT 平衡 ==="
-$GMX grompp -f mdp/nvt.mdp -c em.gro -p system.top -o nvt.tpr -maxwarn 2
+echo "=== [2/4] NVT 平衡（POSRES，参考坐标 em.gro）==="
+$GMX grompp -f mdp/nvt.mdp -c em.gro -r em.gro -p system.top -n index.ndx -o nvt.tpr
 $GMX mdrun -v -deffnm nvt -ntmpi 1
 
-echo "=== [3/4] NPT 平衡 ==="
-$GMX grompp -f mdp/npt.mdp -c nvt.gro -t nvt.cpt -p system.top -o npt.tpr -maxwarn 2
+echo "=== [3/4] NPT 平衡（POSRES，参考坐标 nvt.gro，C-rescale）==="
+$GMX grompp -f mdp/npt.mdp -c nvt.gro -r nvt.gro -t nvt.cpt -p system.top -n index.ndx -o npt.tpr
 $GMX mdrun -v -deffnm npt -ntmpi 1
 
-echo "=== [4/4] 生产 MD ==="
-$GMX grompp -f mdp/md.mdp -c npt.gro -t npt.cpt -p system.top -o md.tpr -maxwarn 2
+echo "=== [4/4] 生产 MD（无 POSRES，Parrinello-Rahman）==="
+$GMX grompp -f mdp/md.mdp -c npt.gro -t npt.cpt -p system.top -n index.ndx -o md.tpr
 $GMX mdrun -v -deffnm md -ntmpi 1
 
 echo "=== 模拟完成 ==="
@@ -161,26 +170,29 @@ def generate_gromacs_inputs(work_dir: str, params: dict) -> str:
     mdp_dir = work / "mdp"
     mdp_dir.mkdir(exist_ok=True)
 
-    dt = params.get("timestep", 0.002)          # ps
+    dt = float(params.get("timestep", 0.002))  # ps
     temperature = params.get("temperature", 310.0)
     pressure = params.get("pressure", 1.0)
     cutoff = params.get("nonbonded_cutoff", 1.0)
     tau_t = params.get("tau_t", 0.1)
-    tau_p = params.get("tau_p", 2.0)
+    # NPT/生产压耦时间常数默认 5.0 ps
+    tau_p = params.get("tau_p", 5.0)
     constraints = _CONSTRAINT_MAP.get(
         params.get("constraints", "HBonds"), "h-bonds"
     )
 
-    # 平衡步数：默认各 50 ps
-    nvt_steps = int(params.get("nvt_time_ps", 50.0) / dt)
-    npt_steps = int(params.get("npt_time_ps", 50.0) / dt)
+    # 默认 NVT 500 ps、NPT 1000 ps
+    nvt_time = float(params.get("nvt_time_ps", 500.0))
+    npt_time = float(params.get("npt_time_ps", 1000.0))
+    nvt_steps = int(round(nvt_time / dt))
+    npt_steps = int(round(npt_time / dt))
     prod_steps = int(
-        params.get("simulation_time_ns", 100.0) * 1000.0 / dt
+        round(float(params.get("simulation_time_ns", 100.0)) * 1000.0 / dt)
     )
-    report_ps = params.get("report_interval_ps", 100.0)
-    nstxout = max(1, int(report_ps / dt))
-    nstenergy = max(1, int(report_ps / dt))
-    nstlog = max(1, int(report_ps / dt))
+    report_ps = float(params.get("report_interval_ps", 100.0))
+    nstxout = max(1, int(round(report_ps / dt)))
+    nstenergy = max(1, int(round(report_ps / dt)))
+    nstlog = max(1, int(round(report_ps / dt)))
 
     fmt = dict(
         dt=dt, temperature=temperature, pressure=pressure,
@@ -201,7 +213,10 @@ def generate_gromacs_inputs(work_dir: str, params: dict) -> str:
     script_path.chmod(0o755)
 
     logger.info(
-        "GROMACS 输入已生成: 生产 MD %d 步 (%.1f ns), mdp/ + run_md.sh",
-        prod_steps, params.get("simulation_time_ns", 100.0),
+        "GROMACS 输入已生成: NVT %d 步 (%.1f ps), NPT %d 步 (%.1f ps), "
+        "生产 %d 步 (%.1f ns); tc-grps=Protein_Ligand Water_and_ions; "
+        "NPT 压耦=C-rescale, 生产=Parrinello-Rahman",
+        nvt_steps, nvt_time, npt_steps, npt_time,
+        prod_steps, float(params.get("simulation_time_ns", 100.0)),
     )
     return str(script_path)

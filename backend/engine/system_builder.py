@@ -13,6 +13,14 @@ from collections import defaultdict
 from pathlib import Path
 
 from .env_check import repair_ambertools, resolve_tool_cmd, source_amber_env, tool_env
+from .ion_box import (
+    assert_box_volume_consistent,
+    build_salt_report,
+    format_salt_report,
+    log_salt_report,
+    plan_salt_pairs,
+    read_amber_inpcrd_box,
+)
 from .pdb_sanitize import sanitize_protein_lines
 
 logger = logging.getLogger(__name__)
@@ -126,7 +134,8 @@ _SALT_CATION = {
     "kcl": "K+",
 }
 
-TLEAP_TEMPLATE_BASE = """\
+# 第一阶段：仅溶剂化，不加盐（盒体积以本阶段 inpcrd 为准）
+TLEAP_TEMPLATE_SOLVATE_MOL2 = """\
 source leaprc.protein.ff14SB
 source leaprc.gaff2
 source leaprc.water.tip3p
@@ -137,15 +146,11 @@ prot = loadpdb {protein_pdb}
 
 complex = combine {{ prot {ligand_vars} }}
 solvatebox complex TIP3PBOX {box_padding}
-addions complex Cl- 0
-addions complex {cation} 0
-{salt_line}
 saveamberparm complex {prmtop} {inpcrd}
 quit
 """
 
-# 标准氨基酸头尾环肽：ff14SB + loadPdbUsingSeq（避免 N*/C* 末端）+ bond 闭环
-TLEAP_TEMPLATE_CYCLIC = """\
+TLEAP_TEMPLATE_SOLVATE_CYCLIC = """\
 source leaprc.protein.ff14SB
 source leaprc.water.tip3p
 
@@ -155,15 +160,11 @@ bond cyc.{resid_start}.N cyc.{resid_end}.C
 
 complex = combine {{ prot cyc }}
 solvatebox complex TIP3PBOX {box_padding}
-addions complex Cl- 0
-addions complex {cation} 0
-{salt_line}
 saveamberparm complex {prmtop} {inpcrd}
 quit
 """
 
-# 标准氨基酸线形肽：ff14SB + loadpdb（保留 N/C 末端，不成环）
-TLEAP_TEMPLATE_LINEAR = """\
+TLEAP_TEMPLATE_SOLVATE_LINEAR = """\
 source leaprc.protein.ff14SB
 source leaprc.water.tip3p
 
@@ -172,12 +173,28 @@ pep = loadpdb {peptide_pdb}
 
 complex = combine {{ prot pep }}
 solvatebox complex TIP3PBOX {box_padding}
+saveamberparm complex {prmtop} {inpcrd}
+quit
+"""
+
+# 第二阶段：加载已溶剂化体系，先中和再加额外盐对（不重新 solvatebox）
+TLEAP_TEMPLATE_ADD_IONS = """\
+source leaprc.protein.ff14SB
+source leaprc.gaff2
+source leaprc.water.tip3p
+
+complex = loadamberparm {solv_prmtop} {solv_inpcrd}
 addions complex Cl- 0
 addions complex {cation} 0
 {salt_line}
 saveamberparm complex {prmtop} {inpcrd}
 quit
 """
+
+# 兼容旧名（避免外部引用断裂）
+TLEAP_TEMPLATE_BASE = TLEAP_TEMPLATE_SOLVATE_MOL2
+TLEAP_TEMPLATE_CYCLIC = TLEAP_TEMPLATE_SOLVATE_CYCLIC
+TLEAP_TEMPLATE_LINEAR = TLEAP_TEMPLATE_SOLVATE_LINEAR
 
 
 def _normalize_salt_type(salt_type: str) -> str:
@@ -257,12 +274,158 @@ def _estimate_box_volume_A3(
 
 
 def _ion_pairs_from_conc(c: float, vol_A3: float) -> int:
-    """由摩尔浓度和体积估算一价盐离子对数（teLeap addIonsRand 需整数）。"""
-    if c <= 0 or vol_A3 <= 0:
-        return 0
-    # 1 Å³ = 10⁻²⁷ L
-    n = c * (vol_A3 * 1e-27) * 6.02214076e23
-    return max(0, int(round(n)))
+    """兼容旧接口：由浓度与体积估算一价盐对数。"""
+    from .ion_box import ion_pairs_from_conc
+    return ion_pairs_from_conc(c, vol_A3)
+
+
+def _salt_line_extra_pairs(cation: str, n_pair: int) -> str:
+    """生成额外盐对的 addionsrand 行（中和已由 addions ... 0 完成）。"""
+    if n_pair > 0:
+        return f"addionsrand complex {cation} {n_pair} Cl- {n_pair}"
+    return "# 跳过额外加盐（目标浓度为 0 或 N_pair=0）"
+
+
+def _write_stage1_mol2_script(
+    protein_pdb_name: str,
+    ligands: list[dict],
+    box_padding: float,
+    solv_prmtop: str,
+    solv_inpcrd: str,
+) -> str:
+    """生成第一阶段（仅溶剂化）tleap 脚本。"""
+    load_lines = []
+    param_lines = []
+    var_names = []
+    for lg in ligands:
+        v = lg["leap_var"]
+        var_names.append(v)
+        load_lines.append(f"{v} = loadmol2 {lg['gaff_mol2']}")
+        param_lines.append(f"loadamberparams {lg['frcmod']}")
+    return TLEAP_TEMPLATE_SOLVATE_MOL2.format(
+        protein_pdb=protein_pdb_name,
+        ligand_load_lines="\n".join(load_lines),
+        ligand_param_lines="\n".join(param_lines),
+        ligand_vars=" ".join(var_names),
+        box_padding=box_padding,
+        prmtop=solv_prmtop,
+        inpcrd=solv_inpcrd,
+    )
+
+
+def _write_stage2_ions_script(
+    solv_prmtop: str,
+    solv_inpcrd: str,
+    cation: str,
+    n_pair: int,
+    prmtop: str,
+    inpcrd: str,
+) -> str:
+    """生成第二阶段（中和 + 额外盐对）tleap 脚本。"""
+    return TLEAP_TEMPLATE_ADD_IONS.format(
+        solv_prmtop=solv_prmtop,
+        solv_inpcrd=solv_inpcrd,
+        cation=cation,
+        salt_line=_salt_line_extra_pairs(cation, n_pair),
+        prmtop=prmtop,
+        inpcrd=inpcrd,
+    )
+
+
+def _two_stage_solvate_and_ions(
+    work: Path,
+    stage1_script: str,
+    *,
+    ion_conc: float,
+    salt_type: str,
+) -> tuple[Path, Path]:
+    """执行两阶段 tleap：溶剂化 → 按实际盒体积加盐，返回最终 prmtop/inpcrd。"""
+    salt = _normalize_salt_type(salt_type)
+    cation = _SALT_CATION[salt]
+
+    solv_prmtop = work / "solvated.prmtop"
+    solv_inpcrd = work / "solvated.inpcrd"
+    prmtop = work / "system.prmtop"
+    inpcrd = work / "system.inpcrd"
+
+    tleap1 = work / "tleap_stage1_solvate.in"
+    tleap1.write_text(stage1_script, encoding="utf-8")
+    logger.info("tleap 第一阶段（仅溶剂化）:\n%s", stage1_script)
+    _run_tleap(work, tleap1, solv_prmtop, solv_inpcrd)
+
+    box1 = read_amber_inpcrd_box(solv_inpcrd)
+    vol1 = box1.volume_A3
+    plan = plan_salt_pairs(salt, cation, ion_conc, vol1)
+    logger.info(
+        "按实际盒体积规划额外盐对: 目标浓度=%.4g M, V=%.3f Å³ (%s), N_pair=%d",
+        plan.target_conc_M, vol1,
+        "正交" if box1.is_orthogonal else "非正交",
+        plan.n_pair,
+    )
+
+    stage2 = _write_stage2_ions_script(
+        solv_prmtop.name, solv_inpcrd.name, cation, plan.n_pair, prmtop.name, inpcrd.name,
+    )
+    tleap2 = work / "tleap_stage2_ions.in"
+    tleap2.write_text(stage2, encoding="utf-8")
+    # 保留总入口名，便于排查
+    (work / "tleap.in").write_text(
+        f"; 两阶段构建：见 {tleap1.name} 与 {tleap2.name}\n" + stage2,
+        encoding="utf-8",
+    )
+    logger.info("tleap 第二阶段（中和+额外盐对）:\n%s", stage2)
+    _run_tleap(work, tleap2, prmtop, inpcrd)
+
+    box2 = read_amber_inpcrd_box(inpcrd)
+    vol2 = box2.volume_A3
+    assert_box_volume_consistent(vol1, vol2)
+
+    # 离子计数暂存到工作目录 JSON，供转 GMX 后写正式报告
+    meta = {
+        "salt_type": salt,
+        "cation": cation,
+        "target_conc_M": ion_conc,
+        "volume_stage1_A3": vol1,
+        "volume_final_A3": vol2,
+        "n_pair": plan.n_pair,
+        "box_stage1": {
+            "lx": box1.lx, "ly": box1.ly, "lz": box1.lz,
+            "alpha": box1.alpha, "beta": box1.beta, "gamma": box1.gamma,
+        },
+    }
+    (work / "salt_plan.json").write_text(
+        __import__("json").dumps(meta, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    logger.info("Amber 两阶段体系构建完成: %s, %s", prmtop.name, inpcrd.name)
+    return prmtop, inpcrd
+
+
+def finalize_salt_report_from_gmx(work_dir: str | Path) -> None:
+    """在 GMX 拓扑就绪后，结合 salt_plan.json 写出最终盐报告。"""
+    import json
+    from .gmx_prepare import count_ions_in_top
+
+    work = Path(work_dir)
+    plan_fp = work / "salt_plan.json"
+    top = work / "system.top"
+    if not plan_fp.is_file() or not top.is_file():
+        logger.warning("缺少 salt_plan.json 或 system.top，跳过盐报告")
+        return
+    plan = json.loads(plan_fp.read_text(encoding="utf-8"))
+    n_cat, n_ani = count_ions_in_top(top, plan.get("cation", "Na+"))
+    report = build_salt_report(
+        salt_type=plan["salt_type"],
+        cation=plan["cation"],
+        target_conc_M=float(plan["target_conc_M"]),
+        volume_stage1_A3=float(plan["volume_stage1_A3"]),
+        volume_final_A3=float(plan["volume_final_A3"]),
+        n_pair=int(plan["n_pair"]),
+        n_cation_total=n_cat,
+        n_anion_total=n_ani,
+    )
+    log_salt_report(report)
+    (work / "SALT_REPORT.txt").write_text(format_salt_report(report), encoding="utf-8")
 
 
 def _make_tleap_script(
@@ -276,48 +439,25 @@ def _make_tleap_script(
     gaff_mol2_paths: list[str] | None = None,
     salt_type: str = "nacl",
 ) -> str:
-    """生成 tleap 输入脚本（支持 1~3 个配体与 NaCl/KCl）。
+    """兼容旧接口：仅生成第一阶段溶剂化脚本（不再预估离子数）。"""
+    _ = (ion_conc, protein_pdb_path, gaff_mol2_paths, salt_type, prmtop, inpcrd)
+    return _write_stage1_mol2_script(
+        protein_pdb, ligands, box_padding, "solvated.prmtop", "solvated.inpcrd",
+    )
 
-    ligands 每项需含 leap_var、gaff_mol2、frcmod（相对 work_dir 的文件名）。
-    """
+
+def _salt_line_for(
+    salt_type: str,
+    ion_conc: float,
+    protein_pdb_path: str,
+    ligand_paths: list[str],
+    box_padding: float,
+) -> tuple[str, str]:
+    """兼容旧接口：不再用溶质包围盒估离子；返回阳离子与占位注释。"""
+    _ = (ion_conc, protein_pdb_path, ligand_paths, box_padding)
     salt = _normalize_salt_type(salt_type)
     cation = _SALT_CATION[salt]
-
-    n_ions = 0
-    gaff_paths = gaff_mol2_paths or [lg.get("gaff_mol2_path", "") for lg in ligands]
-    if ion_conc > 0 and protein_pdb_path and gaff_paths:
-        vol = _estimate_box_volume_A3_coords(protein_pdb_path, gaff_paths, box_padding)
-        n_ions = _ion_pairs_from_conc(ion_conc, vol)
-        logger.info(
-            "离子对估算: 盐=%s, 浓度=%.3f M, 体积≈%.0f Å³ → %d 对 %s/Cl-",
-            salt.upper(), ion_conc, vol, n_ions, cation,
-        )
-
-    if n_ions > 0:
-        salt_line = f"addionsrand complex {cation} {n_ions} Cl- {n_ions}"
-    else:
-        salt_line = "# 跳过加盐（浓度为 0 或估算离子数为 0）"
-
-    load_lines = []
-    param_lines = []
-    var_names = []
-    for lg in ligands:
-        v = lg["leap_var"]
-        var_names.append(v)
-        load_lines.append(f"{v} = loadmol2 {lg['gaff_mol2']}")
-        param_lines.append(f"loadamberparams {lg['frcmod']}")
-
-    return TLEAP_TEMPLATE_BASE.format(
-        protein_pdb=protein_pdb,
-        ligand_load_lines="\n".join(load_lines),
-        ligand_param_lines="\n".join(param_lines),
-        ligand_vars=" ".join(var_names),
-        box_padding=box_padding,
-        cation=cation,
-        salt_line=salt_line,
-        prmtop=prmtop,
-        inpcrd=inpcrd,
-    )
+    return cation, "# 旧接口占位：离子对数改由两阶段实际盒体积计算"
 
 
 def _clean_pdb_for_tleap(pdb_path: str, out_path: str) -> str:
@@ -396,29 +536,6 @@ def _run_tleap(work: Path, tleap_in: Path, prmtop: Path, inpcrd: Path) -> None:
         )
 
 
-def _salt_line_for(
-    salt_type: str,
-    ion_conc: float,
-    protein_pdb_path: str,
-    ligand_paths: list[str],
-    box_padding: float,
-) -> tuple[str, str]:
-    """返回 (cation, salt_line)。"""
-    salt = _normalize_salt_type(salt_type)
-    cation = _SALT_CATION[salt]
-    n_ions = 0
-    if ion_conc > 0 and protein_pdb_path and ligand_paths:
-        vol = _estimate_box_volume_A3_coords(protein_pdb_path, ligand_paths, box_padding)
-        n_ions = _ion_pairs_from_conc(ion_conc, vol)
-        logger.info(
-            "离子对估算: 盐=%s, 浓度=%.3f M, 体积≈%.0f Å³ → %d 对 %s/Cl-",
-            salt.upper(), ion_conc, vol, n_ions, cation,
-        )
-    if n_ions > 0:
-        return cation, f"addionsrand complex {cation} {n_ions} Cl- {n_ions}"
-    return cation, "# 跳过加盐（浓度为 0 或估算离子数为 0）"
-
-
 def build_full_system_cyclic(
     protein_pdb: str,
     cyclic_meta: dict,
@@ -427,7 +544,7 @@ def build_full_system_cyclic(
     ion_conc: float = 0.15,
     salt_type: str = "nacl",
 ) -> tuple[str, str]:
-    """用 ff14SB 构建蛋白 + 头尾环肽溶剂化体系，返回 (prmtop, inpcrd)。"""
+    """用 ff14SB 构建蛋白 + 头尾环肽溶剂化体系（两阶段加盐），返回 (prmtop, inpcrd)。"""
     work = Path(work_dir)
     clean_pdb = _clean_pdb_for_tleap(protein_pdb, str(work / "protein_clean.pdb"))
     cyc_src = Path(cyclic_meta["clean_pdb"]).resolve()
@@ -436,30 +553,20 @@ def build_full_system_cyclic(
     if cyc_src != cyc_dst.resolve():
         shutil.copy(str(cyc_src), str(cyc_dst))
 
-    cation, salt_line = _salt_line_for(
-        salt_type, ion_conc, str(clean_pdb), [str(cyc_dst)], box_padding,
-    )
-    prmtop = work / "system.prmtop"
-    inpcrd = work / "system.inpcrd"
-    tleap_in = work / "tleap.in"
-    # leap_seq 已含花括号，如 { ALA GLY ... }
-    script = TLEAP_TEMPLATE_CYCLIC.format(
+    stage1 = TLEAP_TEMPLATE_SOLVATE_CYCLIC.format(
         protein_pdb=Path(clean_pdb).name,
         cyclic_pdb=cyc_name,
         leap_seq=cyclic_meta["leap_seq"],
         resid_start=int(cyclic_meta["resid_start"]),
         resid_end=int(cyclic_meta["resid_end"]),
         box_padding=box_padding,
-        cation=cation,
-        salt_line=salt_line,
-        prmtop=prmtop.name,
-        inpcrd=inpcrd.name,
+        prmtop="solvated.prmtop",
+        inpcrd="solvated.inpcrd",
     )
-    tleap_in.write_text(script, encoding="utf-8")
-    logger.info("tleap 环肽脚本:\n%s", script)
-    _run_tleap(work, tleap_in, prmtop, inpcrd)
+    prmtop, inpcrd = _two_stage_solvate_and_ions(
+        work, stage1, ion_conc=ion_conc, salt_type=salt_type,
+    )
     _verify_cyclic_peptide_bond(work, cyclic_meta, prmtop, inpcrd)
-    logger.info("Amber 环肽体系构建完成: %s, %s", prmtop.name, inpcrd.name)
     return str(prmtop), str(inpcrd)
 
 
@@ -471,7 +578,7 @@ def build_full_system_linear(
     ion_conc: float = 0.15,
     salt_type: str = "nacl",
 ) -> tuple[str, str]:
-    """用 ff14SB 构建蛋白 + 线形肽溶剂化体系（保留末端，不成环）。"""
+    """用 ff14SB 构建蛋白 + 线形肽溶剂化体系（两阶段加盐），返回 (prmtop, inpcrd)。"""
     work = Path(work_dir)
     clean_pdb = _clean_pdb_for_tleap(protein_pdb, str(work / "protein_clean.pdb"))
     pep_src = Path(peptide_meta["clean_pdb"]).resolve()
@@ -480,25 +587,16 @@ def build_full_system_linear(
     if pep_src != pep_dst.resolve():
         shutil.copy(str(pep_src), str(pep_dst))
 
-    cation, salt_line = _salt_line_for(
-        salt_type, ion_conc, str(clean_pdb), [str(pep_dst)], box_padding,
-    )
-    prmtop = work / "system.prmtop"
-    inpcrd = work / "system.inpcrd"
-    tleap_in = work / "tleap.in"
-    script = TLEAP_TEMPLATE_LINEAR.format(
+    stage1 = TLEAP_TEMPLATE_SOLVATE_LINEAR.format(
         protein_pdb=Path(clean_pdb).name,
         peptide_pdb=pep_name,
         box_padding=box_padding,
-        cation=cation,
-        salt_line=salt_line,
-        prmtop=prmtop.name,
-        inpcrd=inpcrd.name,
+        prmtop="solvated.prmtop",
+        inpcrd="solvated.inpcrd",
     )
-    tleap_in.write_text(script, encoding="utf-8")
-    logger.info("tleap 线形肽脚本:\n%s", script)
-    _run_tleap(work, tleap_in, prmtop, inpcrd)
-    logger.info("Amber 线形肽体系构建完成: %s, %s", prmtop.name, inpcrd.name)
+    prmtop, inpcrd = _two_stage_solvate_and_ions(
+        work, stage1, ion_conc=ion_conc, salt_type=salt_type,
+    )
     return str(prmtop), str(inpcrd)
 
 
@@ -643,21 +741,15 @@ def build_full_system(
     salt_type: str = "nacl",
     ligand_specs: list[dict] | None = None,
 ) -> tuple[str, str]:
-    """tleap 构建溶剂化 Amber 体系，返回 (prmtop, inpcrd) 路径。
+    """tleap 两阶段构建溶剂化 Amber 体系，返回 (prmtop, inpcrd) 路径。
 
-    salt_type: nacl 或 kcl；中和与背景盐阳离子一致。
-    ligand_specs 可选，格式 [{gaff_mol2, frcmod, resname}]；未传时使用单配体参数。
-
-    注意：复制到工作目录的配体文件统一命名为 ligN_gaff.mol2 / ligN.frcmod，
-    避免原文件名含空格或括号时 tleap 解析失败（如 ligand (1).mol2）。
+    第一阶段仅 solvatebox；第二阶段按实际盒体积加入中和反离子与额外盐对。
     """
-    # 单配体与多配体统一走同一复制/命名逻辑
     specs = list(ligand_specs) if ligand_specs else [
         {"gaff_mol2": gaff_mol2, "frcmod": frcmod},
     ]
     leap_ligands = []
     copy_srcs = []
-    gaff_abs = []
     for i, spec in enumerate(specs, 1):
         gaff_src = Path(spec["gaff_mol2"]).resolve()
         frc_src = Path(spec["frcmod"]).resolve()
@@ -670,38 +762,23 @@ def build_full_system(
         })
         copy_srcs.append((gaff_src, gaff_name))
         copy_srcs.append((frc_src, frc_name))
-        gaff_abs.append(str(gaff_src))
 
     work = Path(work_dir)
-
     clean_pdb = _clean_pdb_for_tleap(protein_pdb, str(work / "protein_clean.pdb"))
     logger.info("PDB 已清理: %s", clean_pdb)
-
-    prmtop = work / "system.prmtop"
-    inpcrd = work / "system.inpcrd"
-
-    tleap_in = work / "tleap.in"
-    tleap_in.write_text(_make_tleap_script(
-        protein_pdb=Path(clean_pdb).name,
-        ligands=leap_ligands,
-        box_padding=box_padding,
-        ion_conc=ion_conc,
-        prmtop=prmtop.name,
-        inpcrd=inpcrd.name,
-        protein_pdb_path=str(clean_pdb),
-        gaff_mol2_paths=gaff_abs,
-        salt_type=salt_type,
-    ), encoding="utf-8")
-
-    logger.info("tleap 输入脚本:\n%s", tleap_in.read_text(encoding="utf-8"))
 
     for src, name in copy_srcs:
         s, d = src, (work / name).resolve()
         if s != d:
             shutil.copy(str(s), str(d))
 
-    _run_tleap(work, tleap_in, prmtop, inpcrd)
-    logger.info("Amber 体系构建完成: %s, %s", prmtop.name, inpcrd.name)
+    stage1 = _write_stage1_mol2_script(
+        Path(clean_pdb).name, leap_ligands, box_padding,
+        "solvated.prmtop", "solvated.inpcrd",
+    )
+    prmtop, inpcrd = _two_stage_solvate_and_ions(
+        work, stage1, ion_conc=ion_conc, salt_type=salt_type,
+    )
     return str(prmtop), str(inpcrd)
 
 
