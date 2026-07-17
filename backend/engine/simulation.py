@@ -61,7 +61,6 @@ pcoupl      = no
 gen-vel     = yes
 gen-temp    = {temperature}
 gen-seed    = -1
-nstcheckpoint = 5000
 """
 
 NPT_MDP = """\
@@ -93,9 +92,9 @@ pcoupltype  = isotropic
 tau-p       = {tau_p}
 ref-p       = {pressure}
 compressibility = 4.5e-5
+refcoord_scaling = com
 continuation = yes
 gen-vel     = no
-nstcheckpoint = 5000
 """
 
 MD_MDP = """\

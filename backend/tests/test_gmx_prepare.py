@@ -150,6 +150,7 @@ def test_mdp_nsteps_and_pcoupl(tmp_path: Path) -> None:
     assert "define      = -DPOSRES" in npt
     assert "define      = -DPOSRES" not in md
     assert "pcoupl      = C-rescale" in npt
+    assert "refcoord_scaling = com" in npt
     assert "pcoupl      = Parrinello-Rahman" in md
     assert "tc-grps     = Protein_Ligand Water_and_ions" in nvt
     assert "tc-grps     = Protein_Ligand Water_and_ions" in npt
