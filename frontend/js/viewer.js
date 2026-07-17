@@ -16,6 +16,18 @@
   var viewerDebug = document.getElementById("viewer-debug");
   var styleSelect = document.getElementById("viewer-style");
   var btnResetView = document.getElementById("btn-reset-view");
+  var poseControls = document.getElementById("viewer-pose-controls");
+  var poseSelect = document.getElementById("viewer-pose-select");
+  var poseCountEl = document.getElementById("viewer-pose-count");
+  var btnPosePrev = document.getElementById("btn-pose-prev");
+  var btnPoseNext = document.getElementById("btn-pose-next");
+
+  // PDBQT 多构象预览状态
+  var pdbqtState = {
+    proteinFile: null,
+    poses: [],
+    index: 0,
+  };
 
   function setHint(t) {
     if (viewerHint) viewerHint.textContent = t;
@@ -444,6 +456,193 @@
     ligandComp = null;
   }
 
+  /** 仅移除配体组件，保留蛋白（用于切换 PDBQT 构象） */
+  function clearLigandComponents() {
+    if (!stage) {
+      ligandComps = [];
+      ligandComp = null;
+      return;
+    }
+    ligandComps.forEach(function (c) {
+      try {
+        stage.removeComponent(c);
+      } catch (e) {
+        logDebug("移除配体组件", e.message || String(e));
+      }
+    });
+    ligandComps = [];
+    ligandComp = null;
+  }
+
+  function hidePoseControls() {
+    if (poseControls) poseControls.classList.add("hidden");
+    if (poseSelect) poseSelect.innerHTML = "";
+    if (poseCountEl) poseCountEl.textContent = "";
+  }
+
+  function syncPoseControlsUi() {
+    var n = pdbqtState.poses.length;
+    if (!poseControls || n < 1) {
+      hidePoseControls();
+      return;
+    }
+    poseControls.classList.remove("hidden");
+    if (poseCountEl) {
+      poseCountEl.textContent = "共 " + n + " 个";
+    }
+    if (poseSelect) {
+      poseSelect.innerHTML = "";
+      for (var i = 0; i < n; i++) {
+        var opt = document.createElement("option");
+        opt.value = String(i);
+        opt.textContent = "构象 " + (i + 1);
+        if (i === pdbqtState.index) opt.selected = true;
+        poseSelect.appendChild(opt);
+      }
+      poseSelect.disabled = n <= 1;
+    }
+    if (btnPosePrev) btnPosePrev.disabled = n <= 1;
+    if (btnPoseNext) btnPoseNext.disabled = n <= 1;
+  }
+
+  function getPdbqtPoseIndex() {
+    return pdbqtState.poses.length ? pdbqtState.index : 0;
+  }
+
+  function getPdbqtPoseCount() {
+    return pdbqtState.poses.length;
+  }
+
+  /**
+   * 加载蛋白 PDB + 当前 PDBQT 构象（poses 为 PDB 文本数组）。
+   */
+  function _loadProteinAndPose(proteinFile, keepView) {
+    if (!proteinFile || !pdbqtState.poses.length || !sectionViewer) return;
+    var idx = pdbqtState.index;
+    if (idx < 0 || idx >= pdbqtState.poses.length) idx = 0;
+    pdbqtState.index = idx;
+    var poseText = pdbqtState.poses[idx];
+
+    isLocalPreview = true;
+    window.__webmdCyclicPreview = false;
+    syncPoseControlsUi();
+
+    waitForNgl(function () {
+      setHint("正在加载对接构象 " + (idx + 1) + "/" + pdbqtState.poses.length + "…");
+      afterLayout(function () {
+        try {
+          var st = createStage();
+          if (!keepView || !currentComp) {
+            clearComponents();
+            Promise.all([
+              st.loadFile(proteinFile, { ext: "pdb", defaultRepresentation: false }),
+              st.loadFile(new Blob([poseText], { type: "text/plain" }), {
+                ext: "pdb",
+                defaultRepresentation: false,
+              }),
+            ])
+              .then(function (comps) {
+                _finishDualPreview(comps, "对接配体");
+                setHint(
+                  "预览 · 对接构象 " +
+                    (pdbqtState.index + 1) +
+                    "/" +
+                    pdbqtState.poses.length +
+                    "（选中后将用于模拟）"
+                );
+              })
+              .catch(function (err) {
+                var msg = formatErr(err, "PDBQT 预览");
+                showError(msg);
+                setHint("预览加载失败");
+                logDebug("最终错误", msg);
+              });
+          } else {
+            clearLigandComponents();
+            st.loadFile(new Blob([poseText], { type: "text/plain" }), {
+              ext: "pdb",
+              defaultRepresentation: false,
+            })
+              .then(function (ligComp) {
+                ligandComps = [ligComp];
+                ligandComp = ligComp;
+                applyDualStyle(styleSelect ? styleSelect.value : "cartoon-ligand");
+                setHint(
+                  "预览 · 对接构象 " +
+                    (pdbqtState.index + 1) +
+                    "/" +
+                    pdbqtState.poses.length +
+                    "（选中后将用于模拟）"
+                );
+                if (stage) {
+                  stage.handleResize();
+                  if (stage.viewer) stage.viewer.requestRender();
+                }
+              })
+              .catch(function (err) {
+                var msg = formatErr(err, "切换构象");
+                showError(msg);
+                logDebug("最终错误", msg);
+              });
+          }
+        } catch (err) {
+          var msg2 = formatErr(err, "PDBQT 预览初始化");
+          showError(msg2);
+          setHint("可视化初始化失败");
+          logDebug("最终错误", msg2);
+        }
+      });
+    });
+  }
+
+  /**
+   * 蛋白 PDB 文件 + PDBQT 文件：解析构象并预览。
+   */
+  function loadFromPdbAndPdbqt(proteinFile, pdbqtFile) {
+    if (!proteinFile || !pdbqtFile || !sectionViewer) return;
+    if (!window.WebMdPdbqt || !window.WebMdPdbqt.parsePdbqtPoses) {
+      showError("PDBQT 解析模块未加载");
+      return;
+    }
+    resetDebug();
+    logDebug("预览模式", "本地上传蛋白 PDB + 配体 PDBQT");
+    var reader = new FileReader();
+    reader.onload = function () {
+      var parsed = window.WebMdPdbqt.parsePdbqtPoses(String(reader.result || ""));
+      if (!parsed.count) {
+        showError("未能从 PDBQT 中解析出任何构象（需含 ATOM/HETATM）");
+        hideViewer();
+        return;
+      }
+      pdbqtState.proteinFile = proteinFile;
+      pdbqtState.poses = parsed.poses;
+      pdbqtState.index = 0;
+      logDebug("构象数", String(parsed.count));
+      _loadProteinAndPose(proteinFile, false);
+    };
+    reader.onerror = function () {
+      showError("读取 PDBQT 失败");
+      hideViewer();
+    };
+    reader.readAsText(pdbqtFile);
+  }
+
+  /** 切换到指定构象（0-based），保留蛋白与视角 */
+  function setPdbqtPoseIndex(i) {
+    if (!pdbqtState.poses.length || !pdbqtState.proteinFile) return;
+    var n = pdbqtState.poses.length;
+    var idx = parseInt(i, 10);
+    if (isNaN(idx) || idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    if (idx === pdbqtState.index && ligandComps.length) {
+      syncPoseControlsUi();
+      return;
+    }
+    pdbqtState.index = idx;
+    syncPoseControlsUi();
+    _loadProteinAndPose(pdbqtState.proteinFile, true);
+  }
+
   function normalizeMol2Files(mol2File) {
     if (!mol2File) return [];
     if (Array.isArray(mol2File)) {
@@ -736,6 +935,10 @@
 
     isLocalPreview = true;
     window.__webmdCyclicPreview = false;
+    pdbqtState.proteinFile = null;
+    pdbqtState.poses = [];
+    pdbqtState.index = 0;
+    hidePoseControls();
     resetDebug();
     logDebug("预览模式", "本地上传 PDB + " + mol2Files.length + " 个 MOL2");
 
@@ -780,6 +983,10 @@
 
     isLocalPreview = true;
     window.__webmdCyclicPreview = true;
+    pdbqtState.proteinFile = null;
+    pdbqtState.poses = [];
+    pdbqtState.index = 0;
+    hidePoseControls();
     resetDebug();
     logDebug("预览模式", "本地上传蛋白 PDB + 环肽 PDB");
     logDebug(
@@ -839,7 +1046,33 @@
     clearComponents();
     isLocalPreview = false;
     window.__webmdCyclicPreview = false;
+    pdbqtState.proteinFile = null;
+    pdbqtState.poses = [];
+    pdbqtState.index = 0;
+    hidePoseControls();
     resetDebug();
+  }
+
+  if (poseSelect) {
+    poseSelect.addEventListener("change", function () {
+      setPdbqtPoseIndex(poseSelect.value);
+    });
+  }
+  if (btnPosePrev) {
+    btnPosePrev.addEventListener("click", function () {
+      if (!pdbqtState.poses.length) return;
+      var i = pdbqtState.index - 1;
+      if (i < 0) i = pdbqtState.poses.length - 1;
+      setPdbqtPoseIndex(i);
+    });
+  }
+  if (btnPoseNext) {
+    btnPoseNext.addEventListener("click", function () {
+      if (!pdbqtState.poses.length) return;
+      var i = pdbqtState.index + 1;
+      if (i >= pdbqtState.poses.length) i = 0;
+      setPdbqtPoseIndex(i);
+    });
   }
 
   if (styleSelect) {
@@ -876,6 +1109,10 @@
     load: loadStructure,
     loadFromFiles: loadFromFiles,
     loadFromPdbs: loadFromPdbs,
+    loadFromPdbAndPdbqt: loadFromPdbAndPdbqt,
+    setPdbqtPoseIndex: setPdbqtPoseIndex,
+    getPdbqtPoseIndex: getPdbqtPoseIndex,
+    getPdbqtPoseCount: getPdbqtPoseCount,
     hide: hideViewer,
     hasLocalPreview: function () {
       return isLocalPreview && currentComp && ligandComps.length > 0;

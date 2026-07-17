@@ -12,6 +12,10 @@
   const peptideLabel = document.getElementById("peptide-file-label");
   const pdbFileLabel = document.getElementById("pdb-file-label");
   const mol2Group = document.getElementById("ligand-mol2-group");
+  const pdbqtGroup = document.getElementById("ligand-pdbqt-group");
+  const pdbqtInput = document.getElementById("pdbqt-file");
+  const pdbqtName = document.getElementById("pdbqt-name");
+  const uploadModePdbqtLabel = document.getElementById("upload-mode-pdbqt-label");
   const peptideGroup = document.getElementById("ligand-peptide-group");
   const mol2Actions = document.getElementById("ligand-mol2-actions");
   const uploadSubtitle = document.getElementById("upload-subtitle");
@@ -99,6 +103,17 @@
     updatePreview();
   });
 
+  if (pdbqtInput) {
+    pdbqtInput.addEventListener("change", function () {
+      if (pdbqtName) {
+        pdbqtName.textContent = this.files[0] ? this.files[0].name : "未选择文件";
+        pdbqtName.classList.toggle("has-file", !!this.files[0]);
+      }
+      updateSubmitButton();
+      updatePreview();
+    });
+  }
+
   if (peptideInput) {
     peptideInput.addEventListener("change", function () {
       if (peptideName) {
@@ -134,6 +149,10 @@
 
   function isComplexMode() {
     return getUploadMode() === "complex" && (isPeptideMode() || isMol2Mode());
+  }
+
+  function isPdbqtMode() {
+    return isMol2Mode() && getUploadMode() === "pdbqt";
   }
 
   function getPeptideUploadMode() {
@@ -480,12 +499,22 @@
     var t = getLigandType();
     var pep = isPeptideMode();
     var mol2 = isMol2Mode();
+    // 肽类不支持 PDBQT 模式：若误选则回退到分开上传
+    if (pep && getUploadMode() === "pdbqt") {
+      var sep = document.querySelector('input[name="peptide-upload-mode"][value="separate"]');
+      if (sep) sep.checked = true;
+    }
     var complexMode = isComplexMode();
-    if (mol2Group) mol2Group.classList.toggle("hidden", pep || complexMode);
+    var pdbqtMode = isPdbqtMode();
+    if (uploadModePdbqtLabel) {
+      uploadModePdbqtLabel.classList.toggle("hidden", pep);
+    }
+    if (mol2Group) mol2Group.classList.toggle("hidden", pep || complexMode || pdbqtMode);
+    if (pdbqtGroup) pdbqtGroup.classList.toggle("hidden", !pdbqtMode);
     if (peptideModeGroup) peptideModeGroup.classList.toggle("hidden", !(pep || mol2));
     if (peptideGroup) peptideGroup.classList.toggle("hidden", !pep || complexMode);
     if (complexChainGroup) complexChainGroup.classList.toggle("hidden", !complexMode);
-    if (mol2Actions) mol2Actions.classList.toggle("hidden", pep || complexMode);
+    if (mol2Actions) mol2Actions.classList.toggle("hidden", pep || complexMode || pdbqtMode);
     if (peptideChainCol) peptideChainCol.classList.toggle("hidden", !pep || !complexMode);
     if (ligandResidueCol) ligandResidueCol.classList.toggle("hidden", !mol2 || !complexMode);
     if (peptideLabel) {
@@ -504,7 +533,10 @@
       }
     }
     if (uploadSubtitle) {
-      if (mol2 && complexMode) {
+      if (pdbqtMode) {
+        uploadSubtitle.textContent =
+          "蛋白 PDB + 对接配体 PDBQT；预览中选择构象后再提交（电荷由 WebMd 重算）";
+      } else if (mol2 && complexMode) {
         uploadSubtitle.textContent =
           "上传蛋白-配体复合物 PDB，选择蛋白链与配体残基（坐标已固定，服务端自动转 MOL2）";
       } else if (pep && complexMode) {
@@ -530,7 +562,7 @@
           "线形肽可用分开上传或复合物按链拆分。ff14SB，保留 N/C 末端；蛋白将自动补全链内部缺失残基。";
       } else {
         ligandTypeHint.textContent =
-          "小分子可分开上传 MOL2，或上传复合物 PDB 后选择蛋白链与 HETATM 配体残基（自动转 MOL2）。";
+          "小分子可分开上传 MOL2、对接 PDBQT（多 MODEL 构象可选），或上传复合物 PDB 后选择蛋白链与 HETATM 配体残基（自动转 MOL2）。";
       }
     }
     var addH = document.getElementById("ligand-add-h");
@@ -609,6 +641,19 @@
       }
       return;
     }
+    if (isPdbqtMode()) {
+      if (
+        pdbInput.files[0] &&
+        pdbqtInput &&
+        pdbqtInput.files[0] &&
+        window.MdViewer.loadFromPdbAndPdbqt
+      ) {
+        window.MdViewer.loadFromPdbAndPdbqt(pdbInput.files[0], pdbqtInput.files[0]);
+      } else {
+        window.MdViewer.hide();
+      }
+      return;
+    }
     if (isMol2Mode() && isComplexMode()) {
       var f2 = pdbInput.files[0];
       var pChains2 = getSelectedProteinChains();
@@ -660,6 +705,8 @@
       } else {
         ready = !!(pdbInput.files[0] && peptideInput && peptideInput.files[0]);
       }
+    } else if (isPdbqtMode()) {
+      ready = !!(pdbInput.files[0] && pdbqtInput && pdbqtInput.files[0]);
     } else if (isMol2Mode() && isComplexMode()) {
       var pcs2 = getSelectedProteinChains();
       var ligs = getSelectedLigandResidues();
@@ -675,6 +722,8 @@
       submitHint.textContent = "文件已就绪，点击提交";
     } else if (isPeptideMode() && isComplexMode()) {
       submitHint.textContent = "请上传复合物 PDB，并选择蛋白链与肽链（不可重复）";
+    } else if (isPdbqtMode()) {
+      submitHint.textContent = "请上传蛋白 PDB 与配体 PDBQT";
     } else if (isMol2Mode() && isComplexMode()) {
       submitHint.textContent = "请上传复合物 PDB，并选择蛋白链与配体残基（1–3 个）";
     } else if (getLigandType() === "cyclic") {
@@ -713,6 +762,7 @@
       protein_chains: "",
       peptide_chain: "",
       ligand_residues: "",
+      ligand_pose_index: "0",
     };
   }
 
@@ -727,6 +777,10 @@
           return;
         }
       } else if (!pdbInput.files[0] || !peptideInput || !peptideInput.files[0]) {
+        return;
+      }
+    } else if (isPdbqtMode()) {
+      if (!pdbInput.files[0] || !pdbqtInput || !pdbqtInput.files[0]) {
         return;
       }
     } else if (isMol2Mode() && isComplexMode()) {
@@ -755,6 +809,13 @@
       params.protein_chains = getSelectedProteinChains().join(",");
       params.ligand_residues = getSelectedLigandResidues().join(",");
     }
+    if (isPdbqtMode()) {
+      var poseIdx = 0;
+      if (window.MdViewer && window.MdViewer.getPdbqtPoseIndex) {
+        poseIdx = window.MdViewer.getPdbqtPoseIndex();
+      }
+      params.ligand_pose_index = String(poseIdx);
+    }
 
     errorArea.classList.add("hidden");
     sectionDownload.classList.add("hidden");
@@ -769,6 +830,8 @@
       if (getUploadMode() === "separate") {
         formData.append("cyclic_peptide_file", peptideInput.files[0]);
       }
+    } else if (isPdbqtMode()) {
+      formData.append("pdbqt_file", pdbqtInput.files[0]);
     } else if (!isComplexMode()) {
       if (window.WebMD && window.WebMD.appendMol2ToFormData) {
         window.WebMD.appendMol2ToFormData(formData);

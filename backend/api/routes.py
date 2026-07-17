@@ -177,6 +177,7 @@ async def create_task(
     mol2_file_2: Optional[UploadFile] = File(None),
     mol2_file_3: Optional[UploadFile] = File(None),
     cyclic_peptide_file: Optional[UploadFile] = File(None),
+    pdbqt_file: Optional[UploadFile] = File(None),
     ligand_type: str = Form(default="mol2"),
     is_cyclic_peptide: str = Form(default="0"),
     is_linear_peptide: str = Form(default="0"),
@@ -184,6 +185,7 @@ async def create_task(
     protein_chains: str = Form(default=""),
     peptide_chain: str = Form(default=""),
     ligand_residues: str = Form(default=""),
+    ligand_pose_index: str = Form(default="0"),
     temperature: float = Form(default=DEFAULT_PARAMS["temperature"]),
     pressure: float = Form(default=DEFAULT_PARAMS["pressure"]),
     timestep: float = Form(default=DEFAULT_PARAMS["timestep"]),
@@ -249,13 +251,17 @@ async def create_task(
     work_dir.mkdir(parents=True, exist_ok=True)
 
     pep_mode = (peptide_upload_mode or "separate").strip().lower()
-    if pep_mode not in ("separate", "complex"):
+    if pep_mode not in ("separate", "complex", "pdbqt"):
         pep_mode = "separate"
+    if is_pep and pep_mode == "pdbqt":
+        raise HTTPException(status_code=400, detail="肽类不支持 PDBQT 对接构象模式")
 
     mol2_paths: list[str] = []
     cyclic_pdb_path: Optional[str] = None
     pdb_path = work_dir / "protein.pdb"
     lig_res_keys: list[str] = []
+    pose_idx = 0
+    pose_count = 0
 
     def _norm_ch(s: str) -> str:
         from engine.pdb_chains import norm_chain
@@ -321,6 +327,40 @@ async def create_task(
         except RuntimeError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         pdb_path = Path(prot_out)
+    elif not is_pep and pep_mode == "pdbqt":
+        # 蛋白 PDB + 对接配体 PDBQT：抽取选定构象并转 MOL2
+        from engine.pdbqt_util import pdbqt_to_mol2
+
+        pdb_raw = Path(pdb_file.filename or "protein.pdb").name
+        if not pdb_raw.lower().endswith(".pdb"):
+            raise HTTPException(status_code=400, detail="蛋白须为 PDB 格式")
+        with open(pdb_path, "wb") as f:
+            f.write(await pdb_file.read())
+
+        if pdbqt_file is None or not pdbqt_file.filename:
+            raise HTTPException(status_code=400, detail="PDBQT 模式请上传配体 PDBQT 文件")
+        qt_raw = Path(pdbqt_file.filename).name
+        if not qt_raw.lower().endswith(".pdbqt"):
+            raise HTTPException(status_code=400, detail="配体须为 PDBQT 格式")
+        qt_dest = work_dir / "ligand_upload.pdbqt"
+        with open(qt_dest, "wb") as f:
+            f.write(await pdbqt_file.read())
+
+        try:
+            pose_idx = int(str(ligand_pose_index or "0").strip())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="构象下标须为整数") from e
+
+        mol2_out = work_dir / "ligand_1.mol2"
+        try:
+            mol2_path, pose_count = pdbqt_to_mol2(
+                qt_dest, mol2_out, index=pose_idx, work_dir=work_dir,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        mol2_paths = [mol2_path]
     else:
         # 蛋白文件名消毒，避免空格
         pdb_raw = Path(pdb_file.filename or "protein.pdb").name
@@ -342,7 +382,7 @@ async def create_task(
         with open(cyc_dest, "wb") as f:
             f.write(await cyclic_peptide_file.read())
         cyclic_pdb_path = str(cyc_dest)
-    elif not is_pep and pep_mode != "complex":
+    elif not is_pep and pep_mode == "separate":
         for idx, up in enumerate([mol2_file, mol2_file_2, mol2_file_3], 1):
             if up is None or not up.filename:
                 continue
@@ -380,6 +420,8 @@ async def create_task(
         "protein_chains": protein_chains if pep_mode == "complex" else "",
         "peptide_chain": peptide_chain if is_pep and pep_mode == "complex" else "",
         "ligand_residues": ",".join(lig_res_keys) if not is_pep and pep_mode == "complex" else "",
+        "ligand_pose_index": pose_idx if pep_mode == "pdbqt" else 0,
+        "pdbqt_pose_count": pose_count if pep_mode == "pdbqt" else 0,
     }
 
     task.work_dir = str(work_dir)

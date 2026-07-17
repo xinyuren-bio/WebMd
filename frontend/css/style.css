@@ -2192,6 +2192,22 @@ body.workspace-guide #app {
   background: var(--color-surface);
 }
 
+.viewer-pose-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viewer-pose-controls select {
+  min-width: 120px;
+}
+
+.viewer-pose-count {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
 .ngl-viewport {
   position: relative;
   width: 100%;

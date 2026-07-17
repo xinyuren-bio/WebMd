@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WebMD</title>
-<link rel="stylesheet" href="/css/style.css?v=20260716t">
+<link rel="stylesheet" href="/css/style.css?v=20260717a">
 <link rel="stylesheet" href="/css/interaction.css?v=20260705">
 <link rel="icon" href="/assets/images/logo.png" type="image/png">
 </head>
@@ -244,12 +244,13 @@
         <option value="linear">线形肽（PDB，ff14SB，保留末端）</option>
       </select>
     </div>
-    <p class="hint" id="ligand-type-hint">小分子可分开上传 MOL2，或上传复合物 PDB 后选择蛋白链与配体残基；肽类可分开上传或按链拆分。</p>
+    <p class="hint" id="ligand-type-hint">小分子可分开上传 MOL2、对接 PDBQT，或上传复合物 PDB 后选择蛋白链与配体残基；肽类可分开上传或按链拆分。</p>
     <div class="form-group hidden" id="peptide-upload-mode-group">
       <label>上传方式</label>
       <div class="peptide-mode-row">
         <label class="radio-inline"><input type="radio" name="peptide-upload-mode" value="separate" checked> 分开上传</label>
         <label class="radio-inline"><input type="radio" name="peptide-upload-mode" value="complex"> 复合物 PDB（按链/残基拆分）</label>
+        <label class="radio-inline" id="upload-mode-pdbqt-label"><input type="radio" name="peptide-upload-mode" value="pdbqt"> 对接结果：蛋白 PDB + 配体 PDBQT</label>
       </div>
     </div>
     <div class="form-row">
@@ -272,6 +273,17 @@
             <input type="file" id="mol2-file" accept=".mol2" class="file-input-native">
           </div>
         </div>
+      </div>
+      <div class="form-group ligand-upload-primary hidden" id="ligand-pdbqt-group">
+        <label for="pdbqt-file"><span class="ligand-color-dot ligand-dot-1"></span>配体 · PDBQT <span class="ligand-tag">对接构象</span></label>
+        <div class="file-input-wrapper">
+          <div class="file-input-zone">
+            <span class="file-input-btn">选取文件</span>
+            <span class="file-name" id="pdbqt-name">未选择文件</span>
+            <input type="file" id="pdbqt-file" accept=".pdbqt,.PDBQT" class="file-input-native">
+          </div>
+        </div>
+        <p class="hint" id="pdbqt-pose-hint">上传后将解析 MODEL 构象，可在下方预览中选择用于模拟的构象。电荷由 WebMd 重算。</p>
       </div>
       <div class="form-group ligand-upload-primary hidden" id="ligand-peptide-group">
         <label for="peptide-file"><span class="ligand-color-dot ligand-dot-1"></span><span id="peptide-file-label">肽 · PDB</span></label>
@@ -328,7 +340,7 @@
       <div class="step-badge">2</div>
       <div>
         <h2>复合物 3D 预览</h2>
-        <p class="card-subtitle">上传 PDB 与 MOL2 后即可交互查看蛋白-配体结构</p>
+        <p class="card-subtitle">上传结构后即可交互查看；PDBQT 可在工具栏切换对接构象</p>
       </div>
     </div>
     <div id="viewer-error" class="viewer-error hidden" role="alert"></div>
@@ -346,6 +358,13 @@
         <option value="licorice-all">全原子棍状</option>
         <option value="cartoon-spacefill">蛋白卡通 + 配体空间填充</option>
       </select>
+      <div id="viewer-pose-controls" class="viewer-pose-controls hidden">
+        <label for="viewer-pose-select">对接构象</label>
+        <span id="viewer-pose-count" class="viewer-pose-count"></span>
+        <button type="button" id="btn-pose-prev" class="btn btn-sm btn-secondary" aria-label="上一构象">‹</button>
+        <select id="viewer-pose-select"></select>
+        <button type="button" id="btn-pose-next" class="btn btn-sm btn-secondary" aria-label="下一构象">›</button>
+      </div>
       <button type="button" id="btn-reset-view" class="btn btn-secondary">重置视角</button>
     </div>
     <div id="ngl-viewport" class="ngl-viewport"></div>
@@ -1018,10 +1037,11 @@
 <script src="/js/auth.js?v=20260716j"></script>
 <script src="/js/main_tabs.js?v=20260714"></script>
 <script src="/js/ngl.js"></script>
-<script src="/js/viewer.js?v=20260716e"></script>
+<script src="/js/pdbqt_poses.js?v=20260717a"></script>
+<script src="/js/viewer.js?v=20260717a"></script>
 <script src="/js/payment.js?v=20260716m"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
-<script src="/js/app.js?v=20260716t"></script>
+<script src="/js/app.js?v=20260717a"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
 </html>
