@@ -1,5 +1,5 @@
 # ==================================================
-# 功能说明：为 ACPYPE 拓扑注入位置约束、生成温控 index.ndx，并 grompp 验收
+# 功能说明：为 ACPYPE 拓扑注入位置约束（EM/NVT/NPT）、生成温控 index.ndx，并 grompp 验收
 # 使用方法：convert_to_gromacs 之后由 pipeline 调用 prepare_gmx_equilibration
 # 依赖环境：GROMACS (gmx)；Python 标准库
 # 生成时间：2026-07-17
@@ -248,7 +248,7 @@ def _insert_posres_include(top_text: str, mol: dict, include_name: str) -> str:
         return top_text
 
     insert = (
-        "\n; WebMD 位置约束（NVT/NPT 通过 -DPOSRES 启用）\n"
+        "\n; WebMD 位置约束（EM/NVT/NPT 通过 -DPOSRES 启用）\n"
         "#ifdef POSRES\n"
         f'#include "{include_name}"\n'
         "#endif\n\n"
@@ -447,8 +447,8 @@ def validate_grompp_stages(work_dir: str | Path) -> None:
         raise RuntimeError("grompp 验收缺少 system.gro / system.top / index.ndx")
 
     stages = [
-        ("em", ["-f", str(mdp_dir / "em.mdp"), "-c", str(gro), "-p", str(top),
-                "-n", str(ndx), "-o", str(work / "_check_em.tpr")]),
+        ("em", ["-f", str(mdp_dir / "em.mdp"), "-c", str(gro), "-r", str(gro),
+                "-p", str(top), "-n", str(ndx), "-o", str(work / "_check_em.tpr")]),
         ("nvt", ["-f", str(mdp_dir / "nvt.mdp"), "-c", str(gro), "-r", str(gro),
                  "-p", str(top), "-n", str(ndx), "-o", str(work / "_check_nvt.tpr")]),
         ("npt", ["-f", str(mdp_dir / "npt.mdp"), "-c", str(gro), "-r", str(gro),

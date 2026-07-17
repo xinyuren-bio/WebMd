@@ -18,7 +18,8 @@ _CONSTRAINT_MAP = {
 }
 
 EM_MDP = """\
-; 能量最小化
+; 能量最小化（溶质重原子位置约束，与 NVT/NPT 同用 -DPOSRES）
+define      = -DPOSRES
 integrator  = steep
 emtol       = 1000.0
 emstep      = 0.01
@@ -142,8 +143,8 @@ if [[ ! -f index.ndx ]]; then
   exit 1
 fi
 
-echo "=== [1/4] 能量最小化 ==="
-$GMX grompp -f mdp/em.mdp -c system.gro -p system.top -n index.ndx -o em.tpr
+echo "=== [1/4] 能量最小化（POSRES，参考坐标 system.gro）==="
+$GMX grompp -f mdp/em.mdp -c system.gro -r system.gro -p system.top -n index.ndx -o em.tpr
 $GMX mdrun -v -deffnm em -ntmpi 1
 
 echo "=== [2/4] NVT 平衡（POSRES，参考坐标 em.gro）==="
