@@ -453,6 +453,16 @@
       </div>
       <p class="progress-text" id="progress-text">等待中...</p>
       <p class="task-id" id="task-id-display"></p>
+      <div id="peptide-seq-panel" class="peptide-seq-panel hidden">
+        <h3 class="peptide-seq-title">确认肽氨基酸序列</h3>
+        <p class="hint" id="peptide-seq-hint">检测到非标准肽 PDB（常见于对接导出）。请输入单字母序列；仅当组成与三维匹配全部通过后才会继续，不会展示不确定的“修复预览”。</p>
+        <label class="peptide-seq-label" for="peptide-seq-input">单字母序列（如 ACDEFG）</label>
+        <input type="text" id="peptide-seq-input" class="peptide-seq-input" maxlength="200" autocomplete="off" spellcheck="false" placeholder="仅 A–Y 标准氨基酸">
+        <div class="peptide-seq-actions">
+          <button type="button" class="btn btn-primary" id="btn-peptide-seq-confirm">确认并继续</button>
+        </div>
+        <p class="peptide-seq-error hint" id="peptide-seq-error" style="color:#b91c1c"></p>
+      </div>
       <div id="task-qr-area" class="task-qr-area hidden">
         <p class="hint"><strong>请保存下方二维码</strong>，可随时扫码查看任务进度（无需登录）</p>
         <img id="task-qr-img" class="task-qr-img" alt="任务状态二维码" width="180" height="180">

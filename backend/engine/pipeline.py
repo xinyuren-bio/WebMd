@@ -12,6 +12,7 @@ from pathlib import Path
 from . import protein, ligand, system_builder, simulation, structure_export, ligand_ff
 from . import cyclic_peptide
 from .env_check import check_external_tools
+from .peptide_seq_rebuild import NeedPeptideSequence
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,18 @@ def run_pipeline(
         )
         logger.info("[2/5] 环肽准备完成（ff14SB，头尾成环）")
     elif is_lin:
-        pep_meta = cyclic_peptide.prepare_linear_peptide(cyclic_pdb_path, work_dir)
+        try:
+            pep_meta = cyclic_peptide.prepare_linear_peptide(
+                cyclic_pdb_path,
+                work_dir,
+                confirmed_sequence=params.get("confirmed_peptide_sequence"),
+            )
+        except NeedPeptideSequence as e:
+            params["peptide_sequence_needed"] = True
+            if e.hint_n_res is not None:
+                params["peptide_sequence_hint_n"] = int(e.hint_n_res)
+            status_callback("awaiting_peptide_sequence")
+            raise
         params["ligands"] = [{
             "index": 1,
             "resname": "PEP",
@@ -97,6 +109,7 @@ def run_pipeline(
             "resid_start": pep_meta["resid_start"],
             "resid_end": pep_meta["resid_end"],
         }]
+        params.pop("peptide_sequence_needed", None)
         (work / "FORCEFIELD.txt").write_text(
             "WebMD 力场说明\n==================\n\n"
             f"线形肽 ({pep_meta.get('source')}): Amber ff14SB，保留 N/C 末端（不成环）；"

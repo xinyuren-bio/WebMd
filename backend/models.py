@@ -29,6 +29,7 @@ class TaskStatus(str, enum.Enum):
     PROCESSING_PROTEIN = "processing_protein"
     PROCESSING_LIGAND = "processing_ligand"
     AWAITING_CHARGE_CONFIRM = "awaiting_charge_confirm"
+    AWAITING_PEPTIDE_SEQUENCE = "awaiting_peptide_sequence"
     SOLVATING = "solvating"
     CONVERTING_GMX = "converting_gmx"
     GENERATING_MDP = "generating_mdp"
@@ -43,6 +44,7 @@ class TaskStatus(str, enum.Enum):
             TaskStatus.PROCESSING_PROTEIN: "修复蛋白 (PDBFixer)",
             TaskStatus.PROCESSING_LIGAND: "小分子 GAFF2 参数化 (antechamber)",
             TaskStatus.AWAITING_CHARGE_CONFIRM: "等待确认配体净电荷",
+            TaskStatus.AWAITING_PEPTIDE_SEQUENCE: "等待确认肽序列",
             TaskStatus.SOLVATING: "构建溶剂化体系 (tleap)",
             TaskStatus.CONVERTING_GMX: "转换为 GROMACS 拓扑 (acpype)",
             TaskStatus.GENERATING_MDP: "生成 GROMACS mdp 文件",
@@ -103,6 +105,9 @@ class Task:
             # 净电荷确认弹窗所需字段（若有）
             "charge_confirm": self.params.get("charge_confirm"),
             "ligands_ff": self.params.get("ligands"),
+            "peptide_sequence_needed": bool(self.params.get("peptide_sequence_needed")),
+            "peptide_sequence_hint_n": self.params.get("peptide_sequence_hint_n"),
+            "error_message": self.error_message if self.status == TaskStatus.AWAITING_PEPTIDE_SEQUENCE else "",
         }
 
     def occupies_prep_slot(self) -> bool:
@@ -138,6 +143,8 @@ class Task:
             "analysis_summary": sanitize_user_summary(self.analysis_summary) if self.analysis_summary else "",
             "can_download_md_sim": bool(self.md_sim_zip and Path(self.md_sim_zip).is_file()),
             "can_download_md_analysis": bool(self.md_analysis_zip and Path(self.md_analysis_zip).is_file()),
+            "peptide_sequence_needed": bool(self.params.get("peptide_sequence_needed")),
+            "peptide_sequence_hint_n": self.params.get("peptide_sequence_hint_n"),
         }
 
     def save(self) -> None:

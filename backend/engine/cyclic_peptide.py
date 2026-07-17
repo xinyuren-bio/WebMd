@@ -180,19 +180,49 @@ def prepare_cyclic_peptide(pdb_path: str, work_dir: str) -> dict:
     return meta
 
 
-def prepare_linear_peptide(pdb_path: str, work_dir: str) -> dict:
+def prepare_linear_peptide(
+    pdb_path: str,
+    work_dir: str,
+    confirmed_sequence: str | None = None,
+) -> dict:
     """校验并清理线形肽 PDB，保留 N/C 末端，返回元数据。
 
     与环肽区别：不去掉 OXT/N 端多余质子；tleap 用 loadpdb 自动识别末端。
     仅支持标准氨基酸；残基号重排为 9001 起以便分析选组。
+
+    若 PDB 为对接非标准格式：无确认序列时抛 NeedPeptideSequence；
+    有确认序列则严格核实并重建后再继续。
     """
+    from .peptide_seq_rebuild import (
+        NeedPeptideSequence,
+        hint_n_residues_from_pdb,
+        is_nonstandard_peptide_pdb,
+        rebuild_peptide_pdb_from_sequence,
+    )
+
     src = Path(pdb_path)
     work = Path(work_dir)
     if not src.is_file():
         raise FileNotFoundError(f"线形肽 PDB 不存在: {pdb_path}")
 
-    # UFF/对接 PDB 常破坏原子名，先按 CONECT/几何重命名
-    src = _prepare_source_with_amber_names(src, work)
+    seq = (confirmed_sequence or "").strip() or None
+    if is_nonstandard_peptide_pdb(src):
+        if not seq:
+            hint = hint_n_residues_from_pdb(src)
+            raise NeedPeptideSequence(
+                "检测到非标准肽 PDB（残基名/原子名不完整，常见于对接导出）。"
+                "请输入该肽的单字母氨基酸序列；系统将严格核实组成与三维匹配后再继续。"
+                + (f"结构中氮原子约 {hint} 个，可作长度参考。" if hint else ""),
+                hint_n_res=hint,
+            )
+        rebuilt = work / "linear_peptide_from_seq.pdb"
+        logger.info("非标准肽 PDB：使用用户序列严格重建 → %s", seq)
+        rebuild_peptide_pdb_from_sequence(src, seq, rebuilt)
+        src = rebuilt
+    else:
+        # UFF/对接 PDB 常破坏原子名，先按 CONECT/几何重命名
+        src = _prepare_source_with_amber_names(src, work)
+
     residues = _parse_residues(src)
     if len(residues) < 2:
         raise ValueError("线形肽至少需要 2 个氨基酸残基")

@@ -1894,6 +1894,40 @@ body.workspace-guide #app {
   color: var(--color-text-secondary);
 }
 
+.peptide-seq-panel {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+}
+
+.peptide-seq-title {
+  font-size: 1rem;
+  margin: 0 0 8px;
+}
+
+.peptide-seq-label {
+  display: block;
+  font-size: 0.8125rem;
+  margin: 12px 0 4px;
+  color: var(--color-text-secondary);
+}
+
+.peptide-seq-input {
+  width: 100%;
+  max-width: 420px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.peptide-seq-actions {
+  margin-top: 12px;
+}
+
 .task-id {
   font-size: 0.75rem;
   color: var(--color-text-muted);

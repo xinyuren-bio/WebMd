@@ -38,6 +38,13 @@
   const taskStatusLink = document.getElementById("task-status-link");
   const errorArea = document.getElementById("error-area");
   const errorMsg = document.getElementById("error-msg");
+  const peptideSeqPanel = document.getElementById("peptide-seq-panel");
+  const peptideSeqInput = document.getElementById("peptide-seq-input");
+  const peptideSeqHint = document.getElementById("peptide-seq-hint");
+  const peptideSeqError = document.getElementById("peptide-seq-error");
+  const btnPeptideSeqConfirm = document.getElementById("btn-peptide-seq-confirm");
+  var peptideSeqPollInterval = null;
+  var peptideSeqTaskId = null;
   const sectionDownload = document.getElementById("section-download");
 
   const pipeSteps = {
@@ -809,12 +816,37 @@
     }
   });
 
+  function hidePeptideSeqPanel() {
+    if (peptideSeqPanel) peptideSeqPanel.classList.add("hidden");
+    if (peptideSeqError) peptideSeqError.textContent = "";
+  }
+
+  function showPeptideSeqPanel(task) {
+    if (!peptideSeqPanel) return;
+    peptideSeqPanel.classList.remove("hidden");
+    peptideSeqTaskId = task.task_id;
+    var hint = "检测到非标准肽 PDB（常见于对接导出）。请输入单字母序列；仅当组成与三维匹配全部通过后才会继续。";
+    if (task.peptide_sequence_hint_n) {
+      hint += " 结构中氮原子约 " + task.peptide_sequence_hint_n + " 个，可作长度参考。";
+    }
+    if (task.error_message) {
+      hint += " " + task.error_message;
+    }
+    if (peptideSeqHint) peptideSeqHint.textContent = hint;
+    if (peptideSeqError) peptideSeqError.textContent = "";
+  }
+
   function pollTask(taskId) {
-    var interval = setInterval(async function () {
+    if (peptideSeqPollInterval) {
+      clearInterval(peptideSeqPollInterval);
+      peptideSeqPollInterval = null;
+    }
+    peptideSeqPollInterval = setInterval(async function () {
       try {
         var resp = await apiFetch("/api/tasks/" + taskId);
         if (!resp.ok) {
-          clearInterval(interval);
+          clearInterval(peptideSeqPollInterval);
+          peptideSeqPollInterval = null;
           return;
         }
 
@@ -826,6 +858,7 @@
           pending: 5,
           processing_protein: 15,
           processing_ligand: 30,
+          awaiting_peptide_sequence: 35,
           solvating: 50,
           converting_gmx: 70,
           generating_mdp: 85,
@@ -834,8 +867,15 @@
         };
         progressFill.style.width = (progressMap[task.status] || 0) + "%";
 
+        if (task.status === "awaiting_peptide_sequence") {
+          showPeptideSeqPanel(task);
+          return;
+        }
+        hidePeptideSeqPanel();
+
         if (task.status === "completed") {
-          clearInterval(interval);
+          clearInterval(peptideSeqPollInterval);
+          peptideSeqPollInterval = null;
           sectionDownload.classList.remove("hidden");
           renderLigandFfSummary(task);
           if (window.MdViewer && (!window.MdViewer.hasLocalPreview || !window.MdViewer.hasLocalPreview())) {
@@ -847,18 +887,49 @@
         }
 
         if (task.status === "failed") {
-          clearInterval(interval);
+          clearInterval(peptideSeqPollInterval);
+          peptideSeqPollInterval = null;
           showError(task.error_message || "任务执行失败");
           btnSubmit.textContent = "重新提交";
           btnSubmit.disabled = false;
         }
       } catch (e) {
-        clearInterval(interval);
+        clearInterval(peptideSeqPollInterval);
+        peptideSeqPollInterval = null;
         showError("轮询失败: " + e.message);
         btnSubmit.disabled = false;
         btnSubmit.textContent = "开始准备模拟体系";
       }
     }, 1500);
+  }
+
+  if (btnPeptideSeqConfirm) {
+    btnPeptideSeqConfirm.addEventListener("click", async function () {
+      if (!peptideSeqTaskId || !peptideSeqInput) return;
+      var seq = (peptideSeqInput.value || "").trim();
+      if (peptideSeqError) peptideSeqError.textContent = "";
+      btnPeptideSeqConfirm.disabled = true;
+      btnPeptideSeqConfirm.textContent = "核实中…";
+      try {
+        var resp = await apiFetch("/api/tasks/" + peptideSeqTaskId + "/peptide-sequence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sequence: seq }),
+        });
+        var data = await resp.json().catch(function () { return {}; });
+        if (!resp.ok) {
+          throw new Error(data.detail || "序列确认失败");
+        }
+        hidePeptideSeqPanel();
+        progressText.textContent = "序列已提交，继续处理…";
+        pollTask(peptideSeqTaskId);
+      } catch (e) {
+        if (peptideSeqError) peptideSeqError.textContent = e.message || "确认失败";
+      } finally {
+        btnPeptideSeqConfirm.disabled = false;
+        btnPeptideSeqConfirm.textContent = "确认并继续";
+      }
+    });
   }
 
   function resetPipeline() {
@@ -876,6 +947,10 @@
       "processing_protein", "processing_ligand", "solvating",
       "converting_gmx", "generating_mdp",
     ];
+    // 等待肽序列时仍停留在配体/肽步骤
+    if (status === "awaiting_peptide_sequence") {
+      status = "processing_ligand";
+    }
     var found = false;
     order.forEach(function (key) {
       if (found) return;

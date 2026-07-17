@@ -33,6 +33,7 @@ from config import USERS_DB
 from api.deps import get_current_user
 from models import Task, TaskStatus, tasks
 from engine.pipeline import run_pipeline
+from engine.peptide_seq_rebuild import NeedPeptideSequence, normalize_peptide_sequence
 from engine.autodl_runner import (
     submit_md_job, dispatch_queued_jobs, pull_analysis_from_remote,
     pull_deliverables_from_remote, finalize_md_delivery,
@@ -87,6 +88,9 @@ def _execute_task(
         if task.params.get("confirmed_charges"):
             params = dict(params)
             params["confirmed_charges"] = task.params["confirmed_charges"]
+        if task.params.get("confirmed_peptide_sequence"):
+            params = dict(params)
+            params["confirmed_peptide_sequence"] = task.params["confirmed_peptide_sequence"]
         output_file = run_pipeline(
             task.work_dir,
             pdb_path,
@@ -100,9 +104,18 @@ def _execute_task(
         task.status = TaskStatus.COMPLETED
         task.error_message = ""
         task.params.pop("charge_confirm", None)
+        task.params.pop("peptide_sequence_needed", None)
         from gro_util import count_gro_atoms
         gro_p = Path(task.work_dir) / "system.gro"
         task.atom_count = count_gro_atoms(gro_p)
+    except NeedPeptideSequence as e:
+        task.status = TaskStatus.AWAITING_PEPTIDE_SEQUENCE
+        task.error_message = str(e)
+        task.params = params
+        task.params["peptide_sequence_needed"] = True
+        if e.hint_n_res is not None:
+            task.params["peptide_sequence_hint_n"] = int(e.hint_n_res)
+        logger.info("任务 %s 等待肽序列确认", task_id)
     except Exception as e:
         task.status = TaskStatus.FAILED
         task.error_message = str(e)
@@ -444,6 +457,61 @@ async def get_task(task_id: str, user: dict = Depends(get_current_user)):
     task = _task_owner_or_404(task_id, user)
     return task.to_dict()
 
+
+class PeptideSequenceBody(BaseModel):
+    """用户提交的线形肽单字母序列。"""
+    sequence: str = Field(min_length=2, max_length=200)
+
+
+@router.post("/tasks/{task_id}/peptide-sequence")
+async def confirm_peptide_sequence(
+    task_id: str,
+    body: PeptideSequenceBody,
+    background_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user),
+):
+    """确认非标准肽 PDB 的单字母序列并续跑前处理。"""
+    task = _task_owner_or_404(task_id, user)
+    if task.status != TaskStatus.AWAITING_PEPTIDE_SEQUENCE:
+        raise HTTPException(status_code=400, detail="当前任务不需要确认肽序列")
+    try:
+        seq = normalize_peptide_sequence(body.sequence)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    task.params["confirmed_peptide_sequence"] = seq
+    task.params["peptide_sequence_needed"] = True
+    task.error_message = ""
+    task.status = TaskStatus.PROCESSING_LIGAND
+    task.save()
+
+    work = Path(task.work_dir)
+    pdb_path = str(work / "protein.pdb")
+    # 肽文件：与创建任务时命名一致
+    pep_candidates = [
+        work / "linear_peptide_upload.pdb",
+        work / "peptide_from_complex.pdb",
+        work / "cyclic_peptide_upload.pdb",
+    ]
+    cyclic_pdb = next((str(p) for p in pep_candidates if p.is_file()), None)
+    if not cyclic_pdb:
+        raise HTTPException(status_code=400, detail="找不到肽 PDB 文件，请重新提交任务")
+
+    params = dict(task.params)
+    background_tasks.add_task(
+        _execute_task,
+        task_id,
+        pdb_path,
+        None,
+        params,
+        cyclic_pdb,
+    )
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "status": task.status.value,
+        "confirmed_peptide_sequence": seq,
+    }
 
 
 @router.get("/tasks/{task_id}/public")
