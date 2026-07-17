@@ -163,6 +163,13 @@
     return ch === " " || ch === "" ? "_" : ch;
   }
 
+  // 标准氨基酸：ATOM 中非此类残基可作小分子配体（如对接导出的 UNL）
+  var stdAaRes = {
+    ALA: 1, ARG: 1, ASN: 1, ASP: 1, CYS: 1, GLN: 1, GLU: 1, GLY: 1, HIS: 1,
+    ILE: 1, LEU: 1, LYS: 1, MET: 1, PHE: 1, PRO: 1, SER: 1, THR: 1, TRP: 1,
+    TYR: 1, VAL: 1, HID: 1, HIE: 1, HIP: 1, ASH: 1, GLH: 1, LYN: 1, CYM: 1, CYX: 1,
+  };
+
   function parsePdbChains(text) {
     var map = {};
     var lines = text.split(/\r?\n/);
@@ -173,9 +180,13 @@
       var ch = ln.length > 21 ? ln.charAt(21) : " ";
       var rn = ln.substring(17, 20).trim().toUpperCase();
       var ri = ln.substring(22, 26).trim();
-      if (!map[ch]) map[ch] = { chain: ch, residues: {}, n_atoms: 0 };
+      if (!map[ch]) map[ch] = { chain: ch, residues: {}, n_atoms: 0, n_std_aa: 0 };
       map[ch].n_atoms += 1;
-      map[ch].residues[ri + "|" + rn] = rn;
+      var rk = ri + "|" + rn;
+      if (!map[ch].residues[rk]) {
+        map[ch].residues[rk] = rn;
+        if (stdAaRes[rn]) map[ch].n_std_aa += 1;
+      }
     }
     var out = [];
     Object.keys(map).forEach(function (k) {
@@ -188,6 +199,7 @@
         label: map[k].chain.trim() ? map[k].chain : "(空白链号)",
         n_residues: rns.length,
         n_atoms: map[k].n_atoms,
+        n_std_aa: map[k].n_std_aa,
         resnames_head: rns.slice(0, 6),
       });
     });
@@ -213,11 +225,15 @@
     var groups = {};
     var order = [];
     text.split(/\r?\n/).forEach(function (ln) {
-      if (ln.indexOf("HETATM") !== 0 || ln.length < 26) return;
+      var isHet = ln.indexOf("HETATM") === 0;
+      var isAtom = ln.indexOf("ATOM") === 0;
+      if ((!isHet && !isAtom) || ln.length < 26) return;
       var ch = ln.length > 21 ? ln.charAt(21) : " ";
       var rn = ln.substring(17, 20).trim().toUpperCase();
       var ri = ln.substring(22, 26).trim();
       if (skipLigandRes[rn]) return;
+      // HETATM：非水/离子均作配体；ATOM：仅非标准残基（UNL/MOL 等对接写法）
+      if (isAtom && stdAaRes[rn]) return;
       var gk = ch + "|" + rn + "|" + ri;
       if (!groups[gk]) {
         groups[gk] = {
@@ -227,6 +243,7 @@
           resid: ri,
           key: ligandResidueKey(ch, rn, ri),
           n_atoms: 0,
+          record: isHet ? "HETATM" : "ATOM",
         };
         order.push(gk);
       }
@@ -259,13 +276,14 @@
       var ri = ln.substring(22, 26).trim();
       var row = ln;
       if (!/\n$/.test(row)) row += "\n";
-      if (ln.indexOf("ATOM") === 0 && protSet[ch]) {
-        protLines.push(row);
+      var lk = ligandResidueKey(ch, rn, ri);
+      // 已选配体残基（含 ATOM 写的 UNL）优先归入配体
+      if (ligSet[lk]) {
+        ligMap[lk].push(row);
         return;
       }
-      if (ln.indexOf("HETATM") === 0) {
-        var lk = ligandResidueKey(ch, rn, ri);
-        if (ligSet[lk]) ligMap[lk].push(row);
+      if (ln.indexOf("ATOM") === 0 && protSet[ch]) {
+        protLines.push(row);
       }
     });
     var ligParts = [];
@@ -342,7 +360,7 @@
     cachedLigandResidues = residues || [];
     if (!ligandResidueChecks) return;
     if (!cachedLigandResidues.length) {
-      ligandResidueChecks.innerHTML = "<p class=\"hint\">未识别到 HETATM 配体残基（已排除水/离子）</p>";
+      ligandResidueChecks.innerHTML = "<p class=\"hint\">未识别到配体残基（已排除水/离子；需 HETATM 或 ATOM 非标准残基如 UNL）</p>";
       return;
     }
     var sorted = cachedLigandResidues.slice().sort(function (a, b) {
@@ -384,22 +402,32 @@
   function renderChainPickers(chains) {
     cachedChains = chains || [];
     if (!proteinChainChecks || !peptideChainRadios) return;
+    // 小分子复合物：纯配体链（无标准氨基酸，如空白链 UNL）不列入蛋白链
+    var protCandidates = cachedChains;
+    if (isMol2Mode() && isComplexMode()) {
+      protCandidates = cachedChains.filter(function (c) {
+        return (c.n_std_aa || 0) > 0;
+      });
+      if (!protCandidates.length) protCandidates = cachedChains;
+    }
     if (!cachedChains.length) {
       proteinChainChecks.innerHTML = "<p class=\"hint\">未识别到链，请检查 PDB</p>";
       peptideChainRadios.innerHTML = "";
       return;
     }
     // 默认：残基数最多的为蛋白，最少的为肽（可改）
-    var sorted = cachedChains.slice().sort(function (a, b) {
+    var sorted = protCandidates.slice().sort(function (a, b) {
       return b.n_residues - a.n_residues;
     });
-    var defaultPep = sorted[sorted.length - 1];
+    var defaultPep = cachedChains.slice().sort(function (a, b) {
+      return b.n_residues - a.n_residues;
+    })[cachedChains.length - 1];
     var defaultProt = sorted.filter(function (c) {
-      return c.chain !== defaultPep.chain;
+      return !isPeptideMode() || c.chain !== defaultPep.chain;
     });
     if (!defaultProt.length) defaultProt = [sorted[0]];
 
-    proteinChainChecks.innerHTML = cachedChains
+    proteinChainChecks.innerHTML = protCandidates
       .map(function (c) {
         var key = chainKey(c.chain);
         var checked = defaultProt.some(function (p) {
@@ -526,7 +554,7 @@
     if (complexChainHint) {
       if (mol2 && complexMode) {
         complexChainHint.textContent =
-          "上传对接/复合物 PDB 后：勾选蛋白链（ATOM），并选择 HETATM 配体残基（最多 3 个；已排除水/离子）。";
+          "上传对接/复合物 PDB 后：勾选蛋白链，并选择配体残基（HETATM，或 ATOM 中的 UNL/MOL 等非标准残基；最多 3 个；已排除水/离子）。";
       } else if (pep && complexMode) {
         complexChainHint.textContent =
           "上传复合物后将列出链；请勾选蛋白链，并选择一条肽链。";
@@ -562,7 +590,7 @@
           "线形肽可用分开上传或复合物按链拆分。ff14SB，保留 N/C 末端；蛋白将自动补全链内部缺失残基。";
       } else {
         ligandTypeHint.textContent =
-          "小分子可分开上传 MOL2、对接 PDBQT（多 MODEL 构象可选），或上传复合物 PDB 后选择蛋白链与 HETATM 配体残基（自动转 MOL2）。";
+          "小分子可分开上传 MOL2、对接 PDBQT（多 MODEL 构象可选），或上传复合物 PDB 后选择蛋白链与配体残基（HETATM 或 ATOM 非标准残基如 UNL，自动转 MOL2）。";
       }
     }
     var addH = document.getElementById("ligand-add-h");

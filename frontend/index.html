@@ -316,7 +316,7 @@
     <div id="ligand-extra-list" class="ligand-extra-list"></div>
     <div class="ligand-upload-actions" id="ligand-mol2-actions">
       <button type="button" class="btn btn-sm btn-secondary" id="btn-add-ligand">+ 添加配体（最多 3 个）</button>
-      <p class="hint ligand-upload-hint">多配体时请在 PyMOL / ChimeraX 中预先对齐坐标；复合物模式可从同一 PDB 按 HETATM 残基自动拆分并转 MOL2。
+      <p class="hint ligand-upload-hint">多配体时请在 PyMOL / ChimeraX 中预先对齐坐标；复合物模式可从同一 PDB 按配体残基自动拆分并转 MOL2（支持 HETATM，以及 ATOM 中的 UNL 等非标准残基）。
         分开上传时请先 <a class="guide-text-link" href="/#guide-prep-video">观看拆分教程视频</a>（导出 PDB + SDF，再转 MOL2）。</p>
     </div>
   </section>
@@ -1041,7 +1041,7 @@
 <script src="/js/viewer.js?v=20260717a"></script>
 <script src="/js/payment.js?v=20260716m"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
-<script src="/js/app.js?v=20260717a"></script>
+<script src="/js/app.js?v=20260717b"></script>
 <script src="/js/interaction_analysis.js"></script>
 </body>
 </html>

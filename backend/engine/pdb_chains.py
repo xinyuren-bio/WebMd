@@ -2,7 +2,7 @@
 # 功能说明：解析 PDB 链/配体残基，拆分蛋白-肽或蛋白-小分子复合物
 # 使用方法：list_chains / list_ligand_residues / split_complex / split_complex_mol2
 # 依赖环境：Python 标准库；Open Babel（obabel）用于 PDB→MOL2
-# 生成时间：2026-07-16
+# 生成时间：2026-07-17（ATOM 非标准残基如 UNL 亦作配体）
 # ==================================================
 
 from __future__ import annotations
@@ -99,7 +99,11 @@ def list_chains(fp: str | Path) -> list[dict]:
 
 
 def list_ligand_residues(fp: str | Path) -> list[dict]:
-    """列出 PDB 中可作为小分子的 HETATM 残基（排除水/离子）。"""
+    """列出 PDB 中可作为小分子的配体残基（排除水/离子）。
+
+    设计思路：经典 PDB 用 HETATM；对接导出常把 UNL 写成 ATOM。
+    因此同时收录：全部非水/离子 HETATM，以及 ATOM 中的非标准氨基酸残基。
+    """
     p = Path(fp)
     if not p.is_file():
         raise FileNotFoundError(f"PDB 不存在: {fp}")
@@ -109,12 +113,16 @@ def list_ligand_residues(fp: str | Path) -> list[dict]:
 
     with p.open(encoding="utf-8", errors="replace") as f:
         for ln in f:
-            if not ln.startswith("HETATM") or len(ln) < 26:
+            is_het = ln.startswith("HETATM")
+            is_atom = ln.startswith("ATOM")
+            if not (is_het or is_atom) or len(ln) < 26:
                 continue
             ch = ln[21] if len(ln) > 21 else " "
             rn = ln[17:20].strip().upper()
             ri = ln[22:26].strip()
             if rn in _SKIP_LIGAND_RES:
+                continue
+            if is_atom and rn in _STD_AA:
                 continue
             key = (ch, rn, ri)
             if key not in groups:
@@ -125,6 +133,7 @@ def list_ligand_residues(fp: str | Path) -> list[dict]:
                     "resid": ri,
                     "key": ligand_residue_key(ch, rn, ri),
                     "n_atoms": 0,
+                    "record": "HETATM" if is_het else "ATOM",
                 }
                 order.append(key)
             groups[key]["n_atoms"] += 1
@@ -167,7 +176,10 @@ def split_complex_mol2(
     ligand_keys: list[str],
     out_dir: str | Path,
 ) -> tuple[str, list[str]]:
-    """复合物按蛋白链 + HETATM 配体残基拆分，配体自动转 MOL2。"""
+    """复合物按蛋白链 + 配体残基拆分，配体自动转 MOL2。
+
+    配体可为 HETATM，或 ATOM 中的非标准残基（如 UNL）。
+    """
     src = Path(fp)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -183,6 +195,7 @@ def split_complex_mol2(
     lig_specs: list[tuple[str, str, str]] = []
     for k in ligand_keys:
         lig_specs.append(parse_ligand_residue_key(k))
+    lig_spec_set = set(lig_specs)
 
     avail_lig = {x["key"] for x in list_ligand_residues(src)}
     for k in ligand_keys:
@@ -204,16 +217,16 @@ def split_complex_mol2(
             rn = ln[17:20].strip().upper()
             ri = ln[22:26].strip()
             row = ln if ln.endswith("\n") else ln + "\n"
+            spec = (ch, rn, ri)
+
+            # 已选配体残基（含 ATOM-UNL）优先归入配体，避免混进蛋白
+            if spec in lig_spec_set:
+                lig_lines[spec].append(row)
+                continue
 
             if ln.startswith("ATOM") and ch in prot_ch_set:
                 prot_lines.append(row)
                 n_prot += 1
-                continue
-
-            if ln.startswith("HETATM"):
-                spec = (ch, rn, ri)
-                if spec in lig_lines:
-                    lig_lines[spec].append(row)
 
     if n_prot == 0:
         raise ValueError("所选蛋白链无 ATOM 记录，请检查链选择")
@@ -226,7 +239,7 @@ def split_complex_mol2(
     for i, spec in enumerate(lig_specs, 1):
         atoms = lig_lines.get(spec) or []
         if not atoms:
-            raise ValueError(f"配体残基 {ligand_keys[i - 1]!r} 无 HETATM 原子")
+            raise ValueError(f"配体残基 {ligand_keys[i - 1]!r} 无原子")
         lig_pdb = out / f"ligand_from_complex_{i}.pdb"
         lig_mol2 = out / f"ligand_{i}.mol2"
         atoms.append("END\n")
