@@ -476,21 +476,143 @@ def validate_grompp_stages(work_dir: str | Path) -> None:
             pass
 
 
+def _parse_gro_atoms(fp: Path) -> tuple[str, list[str], str]:
+    """解析 gro：标题、原子行列表、盒行。"""
+    lines = fp.read_text(encoding="utf-8", errors="replace").splitlines()
+    if len(lines) < 3:
+        raise RuntimeError(f"gro 无效: {fp}")
+    title = lines[0]
+    natom = int(lines[1].split()[0])
+    atoms = lines[2:2 + natom]
+    if len(atoms) != natom:
+        raise RuntimeError(f"gro 原子行数不足: {fp}")
+    box = lines[2 + natom] if len(lines) > 2 + natom else "0 0 0"
+    return title, atoms, box
+
+
+def _gro_resname(line: str) -> str:
+    """读取 gro 残基名（列 6–10）。"""
+    if len(line) >= 10:
+        return line[5:10].strip()
+    parts = line.split()
+    return parts[0][-3:] if parts else ""
+
+
+def _moltype_key(name: str) -> str:
+    """分子名归一化键，用于匹配 gro 残基与 top moleculetype。"""
+    return name.upper().replace("+", "").replace("-", "")
+
+
+def sync_gro_order_and_names_with_top(work_dir: str | Path) -> None:
+    """按 system.top 的 [molecules] 顺序重排 system.gro，并同步离子原子名。
+
+    设计思路：ACPYPE 常把 Na+/Cl- 在 gro 中交错排列，而 top 按整块
+    CL- 再 NA+ 列出，导致 grompp 报 atom name mismatch。禁止用 -maxwarn
+    掩盖；改为按拓扑顺序重建 gro，并用 moleculetype 原子名覆盖离子名。
+    """
+    work = Path(work_dir)
+    top_path = work / "system.top"
+    gro_path = work / "system.gro"
+    text = top_path.read_text(encoding="utf-8", errors="replace")
+    mols = _parse_top_moleculetypes(text)
+    counts = _parse_molecules_counts(text)
+    title, atom_lines, box = _parse_gro_atoms(gro_path)
+
+    # 按归一化键分桶（溶质合并为 system 桶）
+    buckets: dict[str, list[str]] = { _moltype_key(m["name"]): [] for m in mols }
+    solute_keys = set()
+    for m in mols:
+        kind = _classify_moltype(m["name"], m["atoms"], set())
+        if kind == "solute":
+            solute_keys.add(_moltype_key(m["name"]))
+
+    for line in atom_lines:
+        res = _gro_resname(line)
+        key = _moltype_key(res)
+        if key in {"WAT", "SOL", "HOH", "TIP3", "TP3", "T3P"}:
+            # 映射到拓扑中的水 moleculetype 名
+            wkey = next((k for k in buckets if k in {"WAT", "SOL", "HOH"}), None)
+            if wkey is None:
+                raise RuntimeError(f"gro 含水残基 {res}，但 top 无对应水 moleculetype")
+            buckets[wkey].append(line)
+        elif key in {"NA", "SOD", "K", "POT", "CL", "CLA"}:
+            if key not in buckets:
+                # top 可能叫 NA+ / CL-
+                match = next((k for k in buckets if k == key), None)
+                if match is None:
+                    raise RuntimeError(f"gro 离子残基 {res} 在 top 中无对应 moleculetype")
+                buckets[match].append(line)
+            else:
+                buckets[key].append(line)
+        else:
+            # 溶质（含配体残基上的 CL 原子名，残基不是 Cl-）
+            if not solute_keys:
+                raise RuntimeError("top 中无溶质 moleculetype，无法归类 gro 溶质原子")
+            # 通常仅一个 system
+            skey = next(iter(solute_keys))
+            buckets[skey].append(line)
+
+    # 按 [molecules] 展开，并修正离子原子名
+    out_atoms: list[str] = []
+    for mol_name, nmol in counts:
+        mdef = next(m for m in mols if m["name"] == mol_name)
+        nat = len(mdef["atoms"])
+        key = _moltype_key(mol_name)
+        need = nat * nmol
+        got = buckets.get(key, [])
+        if len(got) < need:
+            raise RuntimeError(
+                f"重排 gro 失败：{mol_name} 需要 {need} 原子，gro 桶中仅 {len(got)}"
+            )
+        chunk = got[:need]
+        buckets[key] = got[need:]
+        # 按 moleculetype 模板重写原子名（尤其 Na+/Cl-）
+        for i_mol in range(nmol):
+            for j, a in enumerate(mdef["atoms"]):
+                line = chunk[i_mol * nat + j]
+                atom = f"{a['atom']:>5s}"[:5]
+                resn = f"{a['resname']:>5s}"[:5]
+                if len(line) >= 15:
+                    new_line = line[:5] + resn + atom + line[15:]
+                else:
+                    new_line = line
+                out_atoms.append(new_line)
+
+    leftover = sum(len(v) for v in buckets.values())
+    if leftover:
+        raise RuntimeError(f"重排 gro 后仍有 {leftover} 个未归类原子")
+
+    # 重编号原子序号（列 16–20）
+    renum: list[str] = []
+    for i, line in enumerate(out_atoms, 1):
+        if len(line) >= 20:
+            renum.append(line[:15] + f"{i:5d}" + line[20:])
+        else:
+            renum.append(line)
+
+    text_out = title + "\n" + f"{len(renum)}\n" + "\n".join(renum) + "\n" + box + "\n"
+    bak = gro_path.with_suffix(".gro.bak_acpype_order")
+    if not bak.exists():
+        bak.write_text(gro_path.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+    gro_path.write_text(text_out, encoding="utf-8")
+    logger.info("已按 top [molecules] 重排 system.gro 并同步离子原子名（备份 %s）", bak.name)
+
+
 def prepare_gmx_equilibration(
     work_dir: str | Path,
     ligand_resnames: list[str] | None = None,
     *,
     run_grompp_check: bool = True,
 ) -> dict:
-    """注入 POSRES、生成 index.ndx，并可选 grompp 验收。"""
+    """同步 gro/top、注入 POSRES、生成 index.ndx，并可选 grompp 验收。"""
     work = Path(work_dir)
-    # 若 acpype 目录有 posre_system.itp，仍以我们按溶质重生成的为准
     amb = work / "system.amb2gmx"
     if amb.is_dir():
         for extra in amb.glob("posre_*.itp"):
-            # 仅作备份参考，不直接覆盖逻辑
             logger.debug("acpype 附带约束文件: %s", extra.name)
 
+    # 先对齐 gro 与 top，避免 ACPYPE 离子交错导致的 grompp 警告升格为失败
+    sync_gro_order_and_names_with_top(work)
     posres = ensure_position_restraints(work, ligand_resnames)
     index = build_temperature_index(work, ligand_resnames)
     if run_grompp_check:
