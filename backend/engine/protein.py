@@ -117,6 +117,50 @@ def _fix_histidine_protonation(pdb_path: str) -> None:
         f.writelines(out_lines)
 
 
+def _fix_carboxylic_protonation(pdb_path: str) -> None:
+    """将带羧基氢的 ASP/GLU 重命名为 Amber 的 ASH/GLH。
+
+    设计思路：PDBFixer 在 pH=7 时仍可能给侧链羧基加 HD2/HE2，但残基名仍写 ASP/GLU；
+    ff14SB 中质子化形式必须为 ASH/GLH，否则 tleap 报 does not have a type。
+    """
+    with open(pdb_path, encoding="utf-8") as f:
+        lines = f.readlines()
+
+    res_atoms: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+    for i, line in enumerate(lines):
+        if not (line.startswith("ATOM") or line.startswith("HETATM")):
+            continue
+        chain = line[21] if len(line) > 21 else " "
+        resnum = line[22:26].strip()
+        resname = line[17:20].strip()
+        res_atoms[(chain, resnum, resname)].append(i)
+
+    rename_map: dict[int, str] = {}
+    for (chain, resnum, resname), idxs in res_atoms.items():
+        atom_names = {lines[i][12:16].strip() for i in idxs}
+        new_name = None
+        if resname in ("ASP", "ASH") and "HD2" in atom_names:
+            new_name = "ASH"
+        elif resname in ("GLU", "GLH") and "HE2" in atom_names:
+            new_name = "GLH"
+        if new_name is None or new_name == resname:
+            continue
+        for i in idxs:
+            rename_map[i] = new_name
+        logger.info("羧基质子化命名: 链%s 残基%s %s → %s", chain, resnum, resname, new_name)
+
+    if not rename_map:
+        return
+
+    out_lines = []
+    for i, line in enumerate(lines):
+        if i in rename_map:
+            line = line[:17] + f"{rename_map[i]:<3s}" + line[20:]
+        out_lines.append(line)
+    with open(pdb_path, "w", encoding="utf-8") as f:
+        f.writelines(out_lines)
+
+
 def prepare_protein(pdb_path: str, work_dir: str) -> str:
     """PDBFixer 修复蛋白并修正组氨酸命名，返回修复后 PDB 路径。
 
@@ -147,6 +191,7 @@ def prepare_protein(pdb_path: str, work_dir: str) -> str:
         PDBFile.writeFile(fixer.topology, fixer.positions, f)
 
     _fix_histidine_protonation(out)
+    _fix_carboxylic_protonation(out)
 
     n_atoms = sum(1 for _ in fixer.topology.atoms())
     n_res = sum(1 for _ in fixer.topology.residues())

@@ -102,6 +102,14 @@ def _fix_terminal_atoms_for_tleap(lines: list[str]) -> list[str]:
                     "删除异常 OXT: 链%s 残基%s (C–OXT=%.3f Å > %.1f)，交由 tleap 重建",
                     key[0], key[1], dist, _OXT_MAX_BOND_A,
                 )
+            # 带电 C 端模板无羧基氢；PDBFixer 有时写出 HC，tleap 会 FATAL
+            for bad_h in ("HC", "HOXT", "HXT"):
+                if bad_h in names:
+                    drop_idx.add(names[bad_h])
+                    logger.info(
+                        "删除 C 端非法氢: 链%s 残基%s %s",
+                        key[0], key[1], bad_h,
+                    )
 
     out: list[str] = []
     for i, line in enumerate(lines):
@@ -317,7 +325,7 @@ def _clean_pdb_for_tleap(pdb_path: str, out_path: str) -> str:
     cleaned_lines = []
     rename = {
         "CYM": "CYS",
-        "ASH": "ASP", "GLH": "GLU",
+        # 保留 ASH/GLH：ff14SB 支持质子化 Asp/Glu；若改回 ASP/GLU 会残留 HD2/HE2 导致无类型
         "LYN": "LYS", "HYP": "PRO",
     }
 
