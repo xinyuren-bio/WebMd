@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from config import (
     TASKS_DIR, DEFAULT_PARAMS, MD_MAX_NS, SITE_BASE_URL, ALLOWED_SIM_NS,
-    ALLOWED_SALT_TYPES,
+    ALLOWED_SALT_TYPES, MAX_ACTIVE_PREP_TASKS,
     PAYMENT_ENABLED, PAYMENT_AMOUNT, PAYMENT_QR_URL, WECHAT_QR_URL, PAYMENT_CURRENCY,
     TIP_ENABLED, TIP_QR_URL, ANALYTICS_FILE, AUTODL_MARKET_URL, MD_CALLBACK_SECRET,
 )
@@ -191,6 +191,23 @@ async def create_task(
 
     if simulation_time_ns > MD_MAX_NS:
         raise HTTPException(status_code=400, detail=f"模拟时长不能超过 {MD_MAX_NS} ns")
+
+    # 每用户最多同时保留 N 个未释放的前处理任务（含待付款）
+    uid = user["user_id"]
+    active = [
+        t for t in tasks.values()
+        if t.user_id == uid and t.occupies_prep_slot()
+    ]
+    if len(active) >= MAX_ACTIVE_PREP_TASKS:
+        ids = "、".join(t.task_id for t in sorted(active, key=lambda x: x.created_at)[:8])
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"每位用户最多同时提交 {MAX_ACTIVE_PREP_TASKS} 个参数化任务"
+                f"（待付款也计入名额）。请先对已有任务完成付款并启动模拟后再提交。"
+                f"当前占用任务：{ids}"
+            ),
+        )
 
     salt_key = (salt_type or "nacl").strip().lower()
     if salt_key not in ALLOWED_SALT_TYPES:

@@ -48,6 +48,9 @@ DEFAULT_PARAMS = {
 # 允许的 MD 模拟时长（ns），与定价档位一致
 ALLOWED_SIM_NS = (10.0, 100.0, 200.0)
 
+# 每用户同时占用的前处理名额上限（含待付款；付费并进入模拟后释放）
+MAX_ACTIVE_PREP_TASKS = int(os.environ.get("WEBMD_MAX_ACTIVE_PREP_TASKS", "2"))
+
 # 允许的背景盐种类（中和阳离子与背景盐阳离子一致）
 ALLOWED_SALT_TYPES = ("nacl", "kcl")
 

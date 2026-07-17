@@ -105,6 +105,20 @@ class Task:
             "ligands_ff": self.params.get("ligands"),
         }
 
+    def occupies_prep_slot(self) -> bool:
+        """是否占用「参数化」名额。
+
+        设计思路：限制每用户并行前处理数量；待付款/处理中均占名额。
+        已付款且模拟已排队/运行/完成/失败后释放；前处理失败不占名额以便重提。
+        """
+        if self.status == TaskStatus.FAILED:
+            return False
+        if self.payment_status == "paid" and self.md_status in (
+            "queued", "running", "completed", "failed",
+        ):
+            return False
+        return True
+
     def to_public_dict(self) -> dict:
         """公开状态页（无需登录）。"""
         return {

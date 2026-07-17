@@ -781,7 +781,11 @@
 
       if (!resp.ok) {
         var err = await resp.json();
-        throw new Error(err.detail || "创建任务失败");
+        var detail = err.detail;
+        if (Array.isArray(detail)) {
+          detail = detail.map(function (x) { return x.msg || JSON.stringify(x); }).join("; ");
+        }
+        throw new Error(detail || "创建任务失败");
       }
 
       var task = await resp.json();
