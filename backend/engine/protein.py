@@ -2,7 +2,7 @@
 # 功能说明：使用 PDBFixer 修复蛋白（补内部缺失残基/原子/氢）并修正组氨酸命名
 # 使用方法：由 pipeline 调用 prepare_protein(pdb_path, work_dir)
 # 依赖环境：pip install pdbfixer openmm
-# 生成时间：2026-06-23
+# 生成时间：2026-07-17
 # ==================================================
 
 import logging
@@ -11,6 +11,8 @@ from pathlib import Path
 
 from pdbfixer import PDBFixer
 from openmm.app import PDBFile
+
+from .pdb_sanitize import resolve_altloc_lines
 
 logger = logging.getLogger(__name__)
 
@@ -165,10 +167,17 @@ def prepare_protein(pdb_path: str, work_dir: str) -> str:
     """PDBFixer 修复蛋白并修正组氨酸命名，返回修复后 PDB 路径。
 
     对齐 PRISM：对链内部缺失残基执行 addMissingResidues，再补重原子与氢。
+    进入 PDBFixer 前先去掉晶体双构象（每个残基只留一套 altLoc）。
     """
     work = Path(work_dir)
 
-    fixer = PDBFixer(filename=pdb_path)
+    # 先解析 altLoc，避免 Fixer/tleap 同时吃进 A/B 两套坐标
+    raw = Path(pdb_path).read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    resolved = resolve_altloc_lines(raw)
+    pdb_for_fixer = work / "protein_no_altloc.pdb"
+    pdb_for_fixer.write_text("".join(resolved), encoding="utf-8")
+
+    fixer = PDBFixer(filename=str(pdb_for_fixer))
     fixer.findMissingResidues()
     gaps = _keep_internal_missing_residues(fixer)
     if gaps:

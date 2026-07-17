@@ -10,15 +10,15 @@
 | 蛋白修复 | `backend/engine/protein.py` | PDBFixer 补原子/氢；HIS→HID/HIE/HIP；ASP/GLU→ASH/GLH |
 | tleap 前清洗 | `backend/engine/system_builder.py` → `_clean_pdb_for_tleap` | 残基名映射、断链 TER、末端原子修正 |
 | 末端修正 | `system_builder.py` → `_fix_terminal_atoms_for_tleap` | N 端 H→H1、异常 OXT、C 端非法 HC |
-| 断链 | `backend/engine/pdb_sanitize.py` | 空间断链插 TER、按片段修末端 |
+| 断链 / altLoc | `backend/engine/pdb_sanitize.py` | 去双构象、空间断链插 TER、按片段修末端 |
 | 错误提示 | `system_builder.py` → `_tleap_error_hint` | 从 tleap 输出抽 FATAL 给前端/日志 |
 
 处理管线（顺序勿乱）：
 
 ```
 protein.pdb
-  → prepare_protein()          # protein_fixed.pdb（质子化命名在这里定）
-  → _clean_pdb_for_tleap()     # protein_clean.pdb（末端/断链/改名）
+  → prepare_protein()          # 先 resolve_altloc → protein_fixed.pdb（质子化命名）
+  → _clean_pdb_for_tleap()     # protein_clean.pdb（再次去 altLoc / 末端 / 断链 / 改名）
   → tleap (ff14SB)
 ```
 
@@ -28,6 +28,7 @@ protein.pdb
 2. **有质子就改名，不要先删氢再假装去质子化**（除非用户明确要求去质子）。
 3. **`_clean_pdb_for_tleap` 的 rename 表不要把已修好的 ASH/GLH 改回 ASP/GLU**。
 4. **正确性优先**：不为“少报错”而改变化学态（质子化状态）。
+5. **双构象只留一套**：不做多构象系综；择优规则见下文「altLoc」。
 
 ---
 
@@ -133,6 +134,19 @@ grep -E ' HD2 .*ASP | HC  .*ARG ' protein_clean.pdb
 - **不要**再把 `ASH`→`ASP`、`GLH`→`GLU`（历史踩坑：会留下 HD2/HE2）
 
 若新增「非标准 → 标准」映射：先确认目标残基模板是否包含当前全部原子；不包含则应改用 Amber 专用名（如 ASH），而不是硬改回标准名。
+
+---
+
+### 8. 晶体双构象（altLoc A/B）未去重
+
+| 项 | 内容 |
+|----|------|
+| 症状 | 同一残基出现两套 `CA A`/`CA B`；或一套被写成 `C01`/`C02` 导致 `FATAL: Atom ... does not have a type` |
+| 原因 | 晶体学交替构象；MD/tleap 一次只能用一套坐标 |
+| 处理 | `pdb_sanitize.resolve_altloc_lines`：无标号原子保留；多套时优先标准原子名更多者，其次 occupancy，再字母序（A>B）；清空 altLoc 且 occupancy→1.00。`prepare_protein` 在 PDBFixer 前调用；`sanitize_protein_lines` 再保险一次 |
+| 禁忌 | 不要两套都留给 tleap；不要在未择优时盲目只删 A 或只删 B（命名坏的那套可能是 A） |
+| 案例任务 | c3b7b95e621e（ASN 双构象 / C01 命名） |
+| 日期 | 2026-07-17 |
 
 ---
 

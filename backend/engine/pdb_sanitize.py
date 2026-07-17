@@ -1,10 +1,10 @@
 # ==================================================
-# 功能说明：PDB 断链补 TER、按片段修正末端、标准氨基酸原子重命名（兼容 tleap）
+# 功能说明：PDB 断链补 TER、去 altLoc 只留一套构象、按片段修末端、标准氨基酸原子重命名（兼容 tleap）
 # 使用方法：由 protein/peptide/system_builder 在写 tleap 输入前调用
 # 依赖环境：Python 标准库
-# 生成时间：2026-07-16
+# 生成时间：2026-07-17
 # ==================================================
-"""复合物/蛋白 PDB 清洗：空间断链、末端氢、Amber 原子名。"""
+"""复合物/蛋白 PDB 清洗：altLoc、空间断链、末端氢、Amber 原子名。"""
 
 from __future__ import annotations
 
@@ -21,6 +21,66 @@ logger = logging.getLogger(__name__)
 _CA_BREAK_A = 4.5
 # 重原子成键距离上限（Å）
 _BOND_A = 1.90
+
+# 标准氨基酸常见原子名：用于在双构象中优先保留“命名正常”的一套
+# （避免保留被写成 C01/C02 的那套 altLoc）
+_STD_ATOM_NAMES = {
+    "N",
+    "CA",
+    "C",
+    "O",
+    "OXT",
+    "CB",
+    "CG",
+    "CG1",
+    "CG2",
+    "CD",
+    "CD1",
+    "CD2",
+    "CE",
+    "CE1",
+    "CE2",
+    "CE3",
+    "CZ",
+    "CZ2",
+    "CZ3",
+    "CH2",
+    "ND1",
+    "ND2",
+    "NE",
+    "NE1",
+    "NE2",
+    "NZ",
+    "NH1",
+    "NH2",
+    "OD1",
+    "OD2",
+    "OE1",
+    "OE2",
+    "OG",
+    "OG1",
+    "OH",
+    "SD",
+    "SG",
+    "H",
+    "H1",
+    "H2",
+    "H3",
+    "HA",
+    "HA2",
+    "HA3",
+    "HB",
+    "HB1",
+    "HB2",
+    "HB3",
+    "HD1",
+    "HD2",
+    "HE1",
+    "HE2",
+    "HG",
+    "HH",
+    "HZ",
+}
 
 _STD_AA = {
     "ALA",
@@ -73,18 +133,128 @@ def _parse_atom_line(ln: str) -> dict[str, Any] | None:
     elem = ln[76:78].strip().upper() if len(ln) >= 78 else ""
     if not elem:
         elem = re.sub(r"\d", "", name)[:1].upper() or "?"
+    try:
+        occ = float(ln[54:60]) if len(ln) >= 60 else 1.0
+    except ValueError:
+        occ = 1.0
     return {
         "line": ln,
         "name": name,
+        "altloc": ln[16] if len(ln) > 16 else " ",
         "resname": ln[17:20].strip().upper(),
         "chain": ln[21] if len(ln) > 21 else " ",
         "resi": int(ln[22:26]),
+        "icode": ln[26] if len(ln) > 26 else " ",
         "x": x,
         "y": y,
         "z": z,
+        "occ": occ,
         "element": elem,
         "serial": ln[6:11],
     }
+
+
+def _clear_altloc_occupancy(ln: str) -> str:
+    """清空 altLoc，并将 occupancy 置为 1.00。"""
+    raw = ln.rstrip("\n\r")
+    nl = ln[len(raw) :]
+    if len(raw) < 54:
+        return ln
+    # altLoc 列置空格
+    raw = raw[:16] + " " + raw[17:]
+    # occupancy 列：54–60
+    if len(raw) < 60:
+        raw = raw.ljust(60)
+    raw = raw[:54] + f"{1.0:6.2f}" + raw[60:]
+    return raw + nl
+
+
+def _score_altloc(atoms: list[dict[str, Any]]) -> tuple[int, float, int]:
+    """给一套 altLoc 打分（越大越好）：标准原子名数、平均 occupancy、字母序（A>B）。"""
+    if not atoms:
+        return (0, 0.0, 0)
+    n_std = sum(1 for a in atoms if a["name"] in _STD_ATOM_NAMES)
+    mean_occ = sum(float(a["occ"]) for a in atoms) / len(atoms)
+    tag = str(atoms[0]["altloc"] or " ")
+    # -ord：A(65) → -65 > B 的 -66，同分时优先 A
+    letter_rank = -ord(tag[0]) if tag.strip() else 0
+    return (n_std, mean_occ, letter_rank)
+
+
+def resolve_altloc_lines(lines: list[str]) -> list[str]:
+    """每个残基只保留一套交替构象（altLoc）。
+
+    设计思路：
+    1. altLoc 为空格的原子视为各构象共享（常见主链），一律保留；
+    2. 同一残基存在 A/B/... 时，优先保留「标准氨基酸原子名更多」的一套，
+       其次比平均 occupancy，再比字母序（A 优于 B）；
+    3. 保留原子清空 altLoc、occupancy=1.00，避免 tleap/PDBFixer 再歧义。
+    """
+    by_res_alt: dict[tuple[str, int, str, str], dict[str, list[dict[str, Any]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    parsed: list[dict[str, Any] | None] = []
+
+    for ln in lines:
+        atom = _parse_atom_line(ln)
+        parsed.append(atom)
+        if atom is None:
+            continue
+        key = (atom["chain"], atom["resi"], atom["icode"], atom["resname"])
+        alt = atom["altloc"] if atom["altloc"] not in ("", " ") else " "
+        by_res_alt[key][alt].append(atom)
+
+    chosen: dict[tuple[str, int, str, str], str] = {}
+    n_multi = 0
+    for key, alt_map in by_res_alt.items():
+        labeled = {a: atoms for a, atoms in alt_map.items() if a != " "}
+        if not labeled:
+            continue
+        if len(labeled) == 1:
+            chosen[key] = next(iter(labeled.keys()))
+            continue
+        best_alt = max(labeled.keys(), key=lambda a: _score_altloc(labeled[a]))
+        chosen[key] = best_alt
+        n_multi += 1
+        dropped = sorted(a for a in labeled if a != best_alt)
+        logger.info(
+            "altLoc 择优: %s%s%s 保留 %s，丢弃 %s",
+            key[3],
+            key[0].strip() or "-",
+            key[1],
+            best_alt,
+            ",".join(dropped),
+        )
+
+    out: list[str] = []
+    n_kept = 0
+    n_dropped = 0
+    for ln, atom in zip(lines, parsed):
+        if atom is None:
+            out.append(ln)
+            continue
+        key = (atom["chain"], atom["resi"], atom["icode"], atom["resname"])
+        alt = atom["altloc"] if atom["altloc"] not in ("", " ") else " "
+        pick = chosen.get(key)
+        if alt == " ":
+            # 共享原子：仅在 occupancy 异常时规范化
+            out.append(_clear_altloc_occupancy(ln) if abs(atom["occ"] - 1.0) > 1e-3 else ln)
+            n_kept += 1
+            continue
+        if pick is None or alt == pick:
+            out.append(_clear_altloc_occupancy(ln))
+            n_kept += 1
+        else:
+            n_dropped += 1
+
+    if n_multi or n_dropped:
+        logger.info(
+            "altLoc 处理完成: %d 个残基多构象择优，保留原子 %d，丢弃 %d",
+            n_multi,
+            n_kept,
+            n_dropped,
+        )
+    return out
 
 
 def insert_ter_at_ca_breaks(lines: list[str], cutoff: float = _CA_BREAK_A) -> list[str]:
@@ -759,8 +929,9 @@ def assert_peptide_amber_names(pdb_path: str | Path) -> None:
 
 
 def sanitize_protein_lines(lines: list[str]) -> list[str]:
-    """蛋白 PDB 行：断链 TER + 按片段修末端。"""
-    lines2 = insert_ter_at_ca_breaks(lines)
+    """蛋白 PDB 行：去 altLoc → 断链 TER → 按片段修末端。"""
+    lines1 = resolve_altloc_lines(lines)
+    lines2 = insert_ter_at_ca_breaks(lines1)
     return fix_terminal_atoms_by_segment(lines2)
 
 
