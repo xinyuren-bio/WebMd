@@ -366,7 +366,14 @@
         })
         .then(function (task) {
           if (!task) return;
-          // 未完成前处理时不打开支付弹窗（净电荷确认等由 app.js 处理）
+          // 等待肽序列：交给 app.js 的深链恢复（显示填写面板）
+          if (task.status === "awaiting_peptide_sequence") {
+            if (window.WebMdPrep && typeof window.WebMdPrep.pollTask === "function") {
+              window.WebMdPrep.pollTask(tid);
+            }
+            return null;
+          }
+          // 未完成前处理时不打开支付弹窗
           if (task.status !== "completed") return null;
           return apiFetch("/api/tasks/" + tid + "/payment");
         })

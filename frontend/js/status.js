@@ -33,7 +33,10 @@
       html += "<p class=\"status-hint\">前处理可能排队执行；完成后会通知到您的注册邮箱，无需一直停留在本页。</p>";
     }
     if (d.status === "awaiting_peptide_sequence") {
-      html += "<p class=\"status-hint\">需要您在网站确认肽序列后才能继续，请登录首页或打开任务页完成操作。</p>";
+      html += "<p class=\"status-hint\">需要您确认肽氨基酸序列后才能继续前处理。</p>";
+      html += "<p><a class=\"btn btn-primary\" href=\"/?task="
+        + encodeURIComponent(taskId)
+        + "#prepare\">登录后填写肽序列</a></p>";
     }
     if (d.status === "completed") {
       if (d.payment_status === "unpaid" && d.can_pay) {

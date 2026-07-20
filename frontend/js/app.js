@@ -964,7 +964,7 @@
       clearInterval(peptideSeqPollInterval);
       peptideSeqPollInterval = null;
     }
-    peptideSeqPollInterval = setInterval(async function () {
+    async function tick() {
       try {
         var resp = await apiFetch("/api/tasks/" + taskId);
         if (!resp.ok) {
@@ -1033,7 +1033,9 @@
         btnSubmit.disabled = false;
         btnSubmit.textContent = "开始准备模拟体系";
       }
-    }, 1500);
+    }
+    tick();
+    peptideSeqPollInterval = setInterval(tick, 1500);
   }
 
   if (btnPeptideSeqConfirm) {
@@ -1168,4 +1170,53 @@
   window.addEventListener("storage", updateSubmitButton);
   setInterval(updateSubmitButton, 2000);
   syncLigandTypeUi();
+
+  /**
+   * 深链恢复：关页后再打开 /?task=JobID 时可继续填肽序列或看进度。
+   */
+  function resumeTaskFromQuery() {
+    var params = new URLSearchParams(location.search);
+    var tid = (params.get("task") || "").trim();
+    if (!tid) return;
+    if (!window.WebMdAuth || !window.WebMdAuth.getToken()) {
+      if (window.WebMdAuth) window.WebMdAuth.requireLogin();
+      window.addEventListener("webmd-auth-changed", function onAuth() {
+        if (window.WebMdAuth && window.WebMdAuth.getToken()) {
+          window.removeEventListener("webmd-auth-changed", onAuth);
+          resumeTaskFromQuery();
+        }
+      });
+      return;
+    }
+    if (typeof window.WebMD !== "undefined" && window.WebMD.switchView) {
+      window.WebMD.switchView("prepare");
+    }
+    progressArea.classList.remove("hidden");
+    errorArea.classList.add("hidden");
+    if (taskIdDisplay) {
+      taskIdDisplay.innerHTML =
+        'Job ID：<a class="task-id-link" href="/status.html?id='
+        + encodeURIComponent(tid)
+        + '" target="_blank" rel="noopener"><code>'
+        + tid
+        + "</code></a>"
+        + ' · <a class="task-id-link" href="/jobs.html">我的任务</a>';
+    }
+    showTaskQr(tid);
+    progressText.textContent = "正在恢复任务…";
+    pollTask(tid);
+  }
+
+  window.WebMdPrep = {
+    resumeTask: resumeTaskFromQuery,
+    pollTask: pollTask,
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      setTimeout(resumeTaskFromQuery, 50);
+    });
+  } else {
+    setTimeout(resumeTaskFromQuery, 50);
+  }
 })();
