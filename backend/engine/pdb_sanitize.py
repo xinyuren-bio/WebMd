@@ -2,7 +2,7 @@
 # 功能说明：PDB 断链补 TER、去 altLoc 只留一套构象、按片段修末端、标准氨基酸原子重命名（兼容 tleap）
 # 使用方法：由 protein/peptide/system_builder 在写 tleap 输入前调用
 # 依赖环境：Python 标准库
-# 生成时间：2026-07-17
+# 生成时间：2026-07-20（链边界插入 TER）
 # ==================================================
 """复合物/蛋白 PDB 清洗：altLoc、空间断链、末端氢、Amber 原子名。"""
 
@@ -285,8 +285,14 @@ def insert_ter_at_ca_breaks(lines: list[str], cutoff: float = _CA_BREAK_A) -> li
     for i, key in enumerate(res_order):
         if i > 0:
             pk = res_order[i - 1]
+            # 链号变化必须分段：原 PDB 的 TER 会被本函数丢弃后重写，
+            # 若不在此补回，多链会被合成一段，后续会剥掉非首链 N 端 H2/H3，tleap FATAL。
+            if pk[0] != key[0]:
+                out.append("TER\n")
+                n_ter += 1
+                logger.info("链边界插入 TER: 链 %s → %s", pk[0], key[0])
             # 同链且残基号递增时检查空间连续性
-            if pk[0] == key[0] and key[1] >= pk[1]:
+            elif key[1] >= pk[1]:
                 ca0 = ca_of.get(pk)
                 ca1 = ca_of.get(key)
                 if ca0 and ca1 and _dist(ca0, ca1) > cutoff:
