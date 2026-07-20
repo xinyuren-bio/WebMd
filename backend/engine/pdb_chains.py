@@ -1,8 +1,8 @@
 # ==================================================
 # 功能说明：解析 PDB 链/配体残基，拆分蛋白-肽或蛋白-小分子复合物
-# 使用方法：list_chains / list_ligand_residues / split_complex / split_complex_mol2
+# 使用方法：list_chains / count_std_aa_residues / list_ligand_residues / split_complex / split_complex_mol2
 # 依赖环境：Python 标准库；Open Babel（obabel）用于 PDB→MOL2
-# 生成时间：2026-07-17（ATOM 非标准残基如 UNL 亦作配体）
+# 生成时间：2026-07-20
 # ==================================================
 
 from __future__ import annotations
@@ -54,6 +54,31 @@ def parse_ligand_residue_key(key: str) -> tuple[str, str, str]:
         raise ValueError(f"配体残基键格式无效: {key!r}，应为 链|残基名|残基号")
     ch = norm_chain(parts[0])
     return ch, parts[1].strip().upper(), parts[2].strip()
+
+
+def count_std_aa_residues(fp: str | Path) -> int:
+    """统计 PDB 中标准氨基酸残基数（按链+残基号+残基名去重）。
+
+    设计思路：与 list_chains 的 n_std_aa 口径一致，用于提交前拦截超大蛋白，
+    避免小内存服务器在 tleap 溶剂化阶段 OOM。
+    """
+    p = Path(fp)
+    if not p.is_file():
+        raise FileNotFoundError(f"PDB 不存在: {fp}")
+    seen: set[tuple[str, str, str]] = set()
+    with p.open(encoding="utf-8", errors="replace") as f:
+        for ln in f:
+            if not (ln.startswith("ATOM") or ln.startswith("HETATM")):
+                continue
+            if len(ln) < 26:
+                continue
+            rn = ln[17:20].strip().upper()
+            if rn not in _STD_AA:
+                continue
+            ch = ln[21] if len(ln) > 21 else " "
+            ri = ln[22:26].strip()
+            seen.add((ch, ri, rn))
+    return len(seen)
 
 
 def list_chains(fp: str | Path) -> list[dict]:

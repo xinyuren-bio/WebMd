@@ -1,6 +1,14 @@
+# ==================================================
+# 功能说明：WebMD REST API（任务创建、支付、管理与 MD 回调）
+# 使用方法：由 FastAPI 挂载；前处理经后台任务全局串行执行
+# 依赖环境：fastapi、本仓库 backend 包
+# 生成时间：2026-07-20
+# ==================================================
+
 import json
 import logging
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -21,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from config import (
     TASKS_DIR, DEFAULT_PARAMS, MD_MAX_NS, SITE_BASE_URL, ALLOWED_SIM_NS,
-    ALLOWED_SALT_TYPES, MAX_ACTIVE_PREP_TASKS,
+    ALLOWED_SALT_TYPES, MAX_ACTIVE_PREP_TASKS, MAX_PROTEIN_RESIDUES,
     PAYMENT_ENABLED, PAYMENT_AMOUNT, PAYMENT_QR_URL, WECHAT_QR_URL, PAYMENT_CURRENCY,
     TIP_ENABLED, TIP_QR_URL, ANALYTICS_FILE, AUTODL_MARKET_URL, MD_CALLBACK_SECRET,
 )
@@ -45,6 +53,9 @@ from engine.ligand_ff import ensure_ligand_forcefield_json, _find_gaff_mol2
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
+# 全局前处理互斥锁：多用户可同时提交，但同一时刻只跑一个 tleap/antechamber 流水线
+_PREP_LOCK = threading.Lock()
+
 
 class TaskLogHandler(logging.Handler):
     """将 pipeline 日志写入任务对象的 log_lines。"""
@@ -67,62 +78,69 @@ def _execute_task(
     params: dict,
     cyclic_pdb_path: str | None = None,
 ):
-    """后台执行任务。"""
+    """后台执行前处理任务（全局串行，避免并发 tleap 打爆内存）。"""
     task = tasks.get(task_id)
     if not task:
         return
 
-    log_handler = TaskLogHandler(task)
-    log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    engine_logger = logging.getLogger("engine")
-    engine_logger.addHandler(log_handler)
-    engine_logger.setLevel(logging.INFO)
-
-    def update_status(status_str: str):
-        task.status = TaskStatus(status_str)
+    # 排队等待：状态保持 pending，用户可见「等待开始」
+    if _PREP_LOCK.locked():
+        logger.info("任务 %s 排队等待全局前处理名额", task_id)
+        task.status = TaskStatus.PENDING
         task.save()
-        logger.info("任务 %s → %s", task_id, status_str)
 
-    try:
-        # 合并任务上已保存的确认电荷（弹窗确认后写入）
-        if task.params.get("confirmed_charges"):
-            params = dict(params)
-            params["confirmed_charges"] = task.params["confirmed_charges"]
-        if task.params.get("confirmed_peptide_sequence"):
-            params = dict(params)
-            params["confirmed_peptide_sequence"] = task.params["confirmed_peptide_sequence"]
-        output_file = run_pipeline(
-            task.work_dir,
-            pdb_path,
-            mol2_paths,
-            params,
-            update_status,
-            cyclic_pdb_path=cyclic_pdb_path,
-        )
-        task.params = params
-        task.output_file = output_file
-        task.status = TaskStatus.COMPLETED
-        task.error_message = ""
-        task.params.pop("charge_confirm", None)
-        task.params.pop("peptide_sequence_needed", None)
-        from gro_util import count_gro_atoms
-        gro_p = Path(task.work_dir) / "system.gro"
-        task.atom_count = count_gro_atoms(gro_p)
-    except NeedPeptideSequence as e:
-        task.status = TaskStatus.AWAITING_PEPTIDE_SEQUENCE
-        task.error_message = str(e)
-        task.params = params
-        task.params["peptide_sequence_needed"] = True
-        if e.hint_n_res is not None:
-            task.params["peptide_sequence_hint_n"] = int(e.hint_n_res)
-        logger.info("任务 %s 等待肽序列确认", task_id)
-    except Exception as e:
-        task.status = TaskStatus.FAILED
-        task.error_message = str(e)
-        logger.exception("任务 %s 失败", task_id)
-    finally:
-        engine_logger.removeHandler(log_handler)
-        task.save()
+    with _PREP_LOCK:
+        log_handler = TaskLogHandler(task)
+        log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        engine_logger = logging.getLogger("engine")
+        engine_logger.addHandler(log_handler)
+        engine_logger.setLevel(logging.INFO)
+
+        def update_status(status_str: str):
+            task.status = TaskStatus(status_str)
+            task.save()
+            logger.info("任务 %s → %s", task_id, status_str)
+
+        try:
+            # 合并任务上已保存的确认电荷（弹窗确认后写入）
+            if task.params.get("confirmed_charges"):
+                params = dict(params)
+                params["confirmed_charges"] = task.params["confirmed_charges"]
+            if task.params.get("confirmed_peptide_sequence"):
+                params = dict(params)
+                params["confirmed_peptide_sequence"] = task.params["confirmed_peptide_sequence"]
+            output_file = run_pipeline(
+                task.work_dir,
+                pdb_path,
+                mol2_paths,
+                params,
+                update_status,
+                cyclic_pdb_path=cyclic_pdb_path,
+            )
+            task.params = params
+            task.output_file = output_file
+            task.status = TaskStatus.COMPLETED
+            task.error_message = ""
+            task.params.pop("charge_confirm", None)
+            task.params.pop("peptide_sequence_needed", None)
+            from gro_util import count_gro_atoms
+            gro_p = Path(task.work_dir) / "system.gro"
+            task.atom_count = count_gro_atoms(gro_p)
+        except NeedPeptideSequence as e:
+            task.status = TaskStatus.AWAITING_PEPTIDE_SEQUENCE
+            task.error_message = str(e)
+            task.params = params
+            task.params["peptide_sequence_needed"] = True
+            if e.hint_n_res is not None:
+                task.params["peptide_sequence_hint_n"] = int(e.hint_n_res)
+            logger.info("任务 %s 等待肽序列确认", task_id)
+        except Exception as e:
+            task.status = TaskStatus.FAILED
+            task.error_message = str(e)
+            logger.exception("任务 %s 失败", task_id)
+        finally:
+            engine_logger.removeHandler(log_handler)
+            task.save()
 
 
 def _task_owner_or_404(task_id: str, user: dict) -> Task:
@@ -398,6 +416,22 @@ async def create_task(
             raise HTTPException(status_code=400, detail="至少上传一个 MOL2 配体文件")
         if len(mol2_paths) > 3:
             raise HTTPException(status_code=400, detail="最多支持 3 个配体")
+
+    # 蛋白标准氨基酸数上限：超限直接拒绝，避免小内存机溶剂化 OOM
+    from engine.pdb_chains import count_std_aa_residues
+
+    try:
+        n_aa = count_std_aa_residues(pdb_path)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"无法读取蛋白 PDB：{e}") from e
+    if n_aa > MAX_PROTEIN_RESIDUES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"蛋白共 {n_aa} 个氨基酸，超过当前上限 {MAX_PROTEIN_RESIDUES}。"
+                f"超大体系请微信联系管理员 biomd777 处理。"
+            ),
+        )
 
     params = {
         "temperature": temperature,

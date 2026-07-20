@@ -845,6 +845,38 @@
       params.ligand_pose_index = String(poseIdx);
     }
 
+    // 蛋白氨基酸上限（与后端 MAX_PROTEIN_RESIDUES 一致）
+    var maxProteinAa = 800;
+    var nAa = 0;
+    try {
+      if (isComplexMode() && cachedChains && cachedChains.length) {
+        var sel = getSelectedProteinChains();
+        cachedChains.forEach(function (c) {
+          var k = chainKey(c.chain);
+          if (sel.indexOf(k) >= 0 || sel.indexOf(c.chain) >= 0) {
+            nAa += c.n_std_aa || 0;
+          }
+        });
+      } else if (pdbInput.files[0]) {
+        var pdbText = await pdbInput.files[0].text();
+        parsePdbChains(pdbText).forEach(function (c) {
+          nAa += c.n_std_aa || 0;
+        });
+      }
+    } catch (eCount) {
+      nAa = 0;
+    }
+    if (nAa > maxProteinAa) {
+      showError(
+        "蛋白共 " +
+          nAa +
+          " 个氨基酸，超过当前上限 " +
+          maxProteinAa +
+          "。超大体系请微信联系管理员 biomd777 处理。"
+      );
+      return;
+    }
+
     errorArea.classList.add("hidden");
     sectionDownload.classList.add("hidden");
     hideTaskQr();
