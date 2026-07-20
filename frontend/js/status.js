@@ -29,6 +29,12 @@
     if (d.simulation_time_ns != null) {
       html += "<p><strong>模拟时长</strong>：" + d.simulation_time_ns + " ns</p>";
     }
+    if (d.status !== "completed" && d.status !== "failed" && d.status !== "awaiting_peptide_sequence") {
+      html += "<p class=\"status-hint\">前处理可能排队执行；完成后会通知到您的注册邮箱，无需一直停留在本页。</p>";
+    }
+    if (d.status === "awaiting_peptide_sequence") {
+      html += "<p class=\"status-hint\">需要您在网站确认肽序列后才能继续，请登录首页或打开任务页完成操作。</p>";
+    }
     if (d.status === "completed") {
       if (d.payment_status === "unpaid" && d.can_pay) {
         var payAmt = d.payment_amount != null ? Number(d.payment_amount).toFixed(0) : "150/240";

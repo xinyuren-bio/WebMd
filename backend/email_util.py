@@ -1,8 +1,8 @@
 # ==================================================
-# 功能说明：邮件发送（管理员通知、注册验证码）
+# 功能说明：邮件发送（管理员通知、注册验证码、前处理/MD 完成通知）
 # 使用方法：由 api 模块调用
 # 依赖环境：Python 标准库 smtplib；需配置 SMTP_* 环境变量
-# 生成时间：2026-07-13
+# 生成时间：2026-07-20
 # ==================================================
 
 import logging
@@ -237,6 +237,51 @@ def send_admin_md_completed_notify(
     if ok:
         logger.info("已发送 MD 完成通知：任务 %s", task_id)
     return ok
+
+
+def send_user_prep_done_notify(
+    user_email: str,
+    task_id: str,
+    site_base: str,
+    *,
+    ok: bool,
+    error_message: str = "",
+) -> bool:
+    """前处理结束时通知用户（成功可去支付，失败可查看原因）。
+
+    设计思路：前处理全局串行，用户可能离开页面排队；邮件避免其一直盯进度。
+    """
+    if not user_email:
+        return False
+
+    base = site_base.rstrip("/")
+    status_url = f"{base}/status.html?id={task_id}"
+    if ok:
+        subject = f"[WebMD] 前处理已完成 · 任务 {task_id}"
+        body = (
+            f"您好，\n\n"
+            f"任务 {task_id} 的体系前处理已完成。\n"
+            f"请登录网站完成支付后下载文件包，并可启动 MD 模拟。\n\n"
+            f"任务状态：{status_url}\n"
+            f"我的任务：{base}/jobs.html\n"
+            f"售后微信：biomd777\n"
+        )
+    else:
+        subject = f"[WebMD] 前处理未成功 · 任务 {task_id}"
+        err = (error_message or "未知错误").strip()
+        if len(err) > 500:
+            err = err[:500] + "…"
+        body = (
+            f"您好，\n\n"
+            f"任务 {task_id} 的体系前处理未成功完成。\n"
+            f"错误信息：{err}\n\n"
+            f"可登录网站查看详情或重新提交；也可微信联系 biomd777 协助处理。\n"
+            f"任务状态：{status_url}\n"
+        )
+    sent = _send_mail(user_email, subject, body)
+    if sent:
+        logger.info("已发送前处理%s通知：%s 任务 %s", "完成" if ok else "失败", user_email, task_id)
+    return sent
 
 
 def send_user_md_completed_notify(

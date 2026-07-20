@@ -975,7 +975,16 @@
 
         var task = await resp.json();
         updatePipeline(task.status);
-        progressText.textContent = task.status_label;
+        // 排队/处理中强调邮箱通知，避免用户一直等待
+        if (task.status === "pending") {
+          progressText.textContent = "排队等待前处理…完成后将通知到您的注册邮箱";
+        } else if (task.status === "completed") {
+          progressText.textContent = "前处理已完成（结果邮件已发送至注册邮箱）";
+        } else if (task.status === "failed") {
+          progressText.textContent = task.status_label || "前处理失败";
+        } else {
+          progressText.textContent = (task.status_label || "") + " · 完成后将邮件通知您";
+        }
 
         var progressMap = {
           pending: 5,
@@ -991,6 +1000,7 @@
         progressFill.style.width = (progressMap[task.status] || 0) + "%";
 
         if (task.status === "awaiting_peptide_sequence") {
+          progressText.textContent = "等待确认肽序列（需在本页操作）";
           showPeptideSeqPanel(task);
           return;
         }

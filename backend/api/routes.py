@@ -35,7 +35,13 @@ from config import (
 )
 from payment_util import calc_payment_amount, verify_admin_key, price_for_sim_ns, qr_urls_for_sim_ns
 from analytics_util import record_visit, get_analytics_stats, collect_md_completion_stats
-from email_util import send_admin_payment_notify, send_admin_need_autodl_notify, send_admin_md_completed_notify, send_user_md_completed_notify
+from email_util import (
+    send_admin_payment_notify,
+    send_admin_need_autodl_notify,
+    send_admin_md_completed_notify,
+    send_user_md_completed_notify,
+    send_user_prep_done_notify,
+)
 from user_store import get_user_by_id, get_user_by_email, count_users, list_recent_users
 from config import USERS_DB
 from api.deps import get_current_user
@@ -141,6 +147,20 @@ def _execute_task(
         finally:
             engine_logger.removeHandler(log_handler)
             task.save()
+            # 前处理终态发邮件，避免用户因串行排队一直盯页面
+            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                u = get_user_by_id(Path(USERS_DB), task.user_id) if task.user_id else None
+                em = (u or {}).get("email") or ""
+                try:
+                    send_user_prep_done_notify(
+                        em,
+                        task_id,
+                        SITE_BASE_URL,
+                        ok=(task.status == TaskStatus.COMPLETED),
+                        error_message=task.error_message or "",
+                    )
+                except Exception:
+                    logger.exception("任务 %s 前处理结果邮件发送异常", task_id)
 
 
 def _task_owner_or_404(task_id: str, user: dict) -> Task:
