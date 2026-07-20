@@ -49,7 +49,7 @@ DEFAULT_PARAMS = {
 ALLOWED_SIM_NS = (10.0, 100.0, 200.0)
 
 # 每用户同时占用的前处理名额上限（含待付款；付费并进入模拟后释放）
-MAX_ACTIVE_PREP_TASKS = int(os.environ.get("WEBMD_MAX_ACTIVE_PREP_TASKS", "2"))
+MAX_ACTIVE_PREP_TASKS = int(os.environ.get("WEBMD_MAX_ACTIVE_PREP_TASKS", "10"))
 
 # 蛋白标准氨基酸残基数上限（超限需联系管理员；避免小内存机 tleap OOM）
 MAX_PROTEIN_RESIDUES = int(os.environ.get("WEBMD_MAX_PROTEIN_RESIDUES", "800"))
