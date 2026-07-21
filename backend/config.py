@@ -1,6 +1,19 @@
+# ==================================================
+# 功能说明：WebMD 全局配置与环境变量加载
+# 使用方法：由 main / routes / engine 导入；生产请配置 backend/.env
+# 依赖环境：Python 标准库
+# 生成时间：2026-07-21
+# ==================================================
+
 import os
+import sys
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# 已知不安全默认值：生产环境禁止使用
+_DEFAULT_JWT_SECRET = "webmd-change-jwt-secret-in-production"
+_DEFAULT_MD_CALLBACK_SECRET = "webmd-md-callback-change-me"
+_DEFAULT_ADMIN_KEY = "webmd-admin-2026"
 
 
 def _load_env_file() -> None:
@@ -90,9 +103,10 @@ TIP_QR_URL = PAYMENT_QR_URL
 
 # 用户与认证
 USERS_DB = os.path.join(BASE_DIR, "data", "users.db")
-JWT_SECRET = os.environ.get("WEBMD_JWT_SECRET", "webmd-change-jwt-secret-in-production")
+JWT_SECRET = os.environ.get("WEBMD_JWT_SECRET", _DEFAULT_JWT_SECRET)
 JWT_EXPIRE_DAYS = int(os.environ.get("WEBMD_JWT_EXPIRE_DAYS", "14"))
 SITE_BASE_URL = os.environ.get("WEBMD_SITE_URL", "http://localhost:8000")
+WEBMD_ENV = os.environ.get("WEBMD_ENV", "development").strip().lower()
 
 # 邮件通知（管理员收信地址勿提交 Git，用环境变量覆盖）
 ADMIN_NOTIFY_EMAIL = os.environ.get("WEBMD_ADMIN_NOTIFY_EMAIL", "")
@@ -116,6 +130,75 @@ AUTODL_SSH_PASSWORD = os.environ.get("AUTODL_SSH_PASSWORD", "")
 AUTODL_REMOTE_DIR = os.environ.get("AUTODL_REMOTE_DIR", "/root/webmd_jobs").strip()
 AUTODL_MAX_CONCURRENT = int(os.environ.get("AUTODL_MAX_CONCURRENT", "2"))
 AUTODL_MARKET_URL = os.environ.get("AUTODL_MARKET_URL", "https://www.autodl.com/market/list")
-MD_CALLBACK_SECRET = os.environ.get("WEBMD_MD_CALLBACK_SECRET", "webmd-md-callback-change-me")
+MD_CALLBACK_SECRET = os.environ.get(
+    "WEBMD_MD_CALLBACK_SECRET", _DEFAULT_MD_CALLBACK_SECRET
+)
 # 邮件单附件大小上限（字节），超过则仅发下载链接
 MAX_EMAIL_ATTACH_BYTES = int(os.environ.get("WEBMD_MAX_EMAIL_ATTACH_MB", "20")) * 1024 * 1024
+
+# 启动副作用开关（1/true 跳过）
+SKIP_AUTODL_DISPATCH = os.environ.get("WEBMD_SKIP_AUTODL_DISPATCH", "0").strip().lower() in (
+    "1", "true", "yes",
+)
+SKIP_AMBER_REPAIR = os.environ.get("WEBMD_SKIP_AMBER_REPAIR", "0").strip().lower() in (
+    "1", "true", "yes",
+)
+
+
+def is_production() -> bool:
+    """判断是否按生产环境规则运行。"""
+    if WEBMD_ENV in ("prod", "production"):
+        return True
+    # 未显式标注但站点 URL 已指向公网域名时，也视为生产
+    u = (SITE_BASE_URL or "").lower()
+    if "localhost" in u or "127.0.0.1" in u:
+        return False
+    return any(x in u for x in ("webmd.tech", "https://"))
+
+
+def cors_allow_origins() -> list[str]:
+    """生产环境收紧 CORS；开发仍允许 *。"""
+    if not is_production():
+        return ["*"]
+    base = (SITE_BASE_URL or "").rstrip("/")
+    origins = {base}
+    if base.startswith("https://"):
+        origins.add("http://" + base[len("https://"):])
+    elif base.startswith("http://"):
+        origins.add("https://" + base[len("http://"):])
+    # 常见带端口访问
+    if "webmd.tech" in base:
+        origins.update(
+            {
+                "http://webmd.tech",
+                "https://webmd.tech",
+                "http://www.webmd.tech",
+                "https://www.webmd.tech",
+                "http://webmd.tech:8000",
+                "http://www.webmd.tech:8000",
+                "http://8.219.168.5:8000",
+            }
+        )
+    return sorted(o for o in origins if o)
+
+
+def assert_production_secrets() -> None:
+    """生产环境禁止默认密钥，避免误用开发占位值上线。"""
+    if not is_production():
+        return
+    admin_key = os.environ.get("WEBMD_ADMIN_KEY", _DEFAULT_ADMIN_KEY)
+    bad: list[str] = []
+    if not JWT_SECRET or JWT_SECRET == _DEFAULT_JWT_SECRET:
+        bad.append("WEBMD_JWT_SECRET")
+    if not MD_CALLBACK_SECRET or MD_CALLBACK_SECRET == _DEFAULT_MD_CALLBACK_SECRET:
+        bad.append("WEBMD_MD_CALLBACK_SECRET")
+    if not admin_key or admin_key == _DEFAULT_ADMIN_KEY:
+        bad.append("WEBMD_ADMIN_KEY")
+    if bad:
+        msg = (
+            "生产环境检测到未替换的默认密钥: "
+            + ", ".join(bad)
+            + "。请在 backend/.env 中设置强随机值后重启。"
+        )
+        print(msg, file=sys.stderr)
+        raise SystemExit(msg)

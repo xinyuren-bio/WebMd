@@ -134,6 +134,32 @@ bash run_md.sh
 
 ---
 
+## 本地开发 / 生产部署（简要）
+
+```bash
+# 1) 依赖
+cd backend
+pip install -r requirements.txt          # 生产
+pip install -r requirements-dev.txt      # 开发测试（含 pytest）
+
+# 2) 环境变量
+cp .env.example .env                     # 编辑密钥、SMTP、站点 URL
+# 生产务必：WEBMD_ENV=production，并替换 JWT / ADMIN / CALLBACK 默认值
+
+# 3) 启动
+uvicorn main:app --host 0.0.0.0 --port 8000
+# 或使用仓库 deploy/start.sh + deploy/webmd.service（systemd）
+```
+
+生产检查清单：
+
+1. `backend/.env` 已设置强密钥，且 `WEBMD_ENV=production`
+2. `systemctl enable --now webmd` 常驻，避免手动 nohup
+3. 防火墙放行所需端口；任务目录 `backend/tasks/` 定期清理
+4. AutoDL SSH 密码仅在调度时驻留内存，**不会**写入 `task_meta.json`
+
+---
+
 <p align="center">
   <a href="http://8.219.168.5:8000/"><strong>打开 WebMD →</strong></a>
   &nbsp;·&nbsp;

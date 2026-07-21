@@ -2,9 +2,14 @@
 # 功能说明：WebMD FastAPI 入口（路由、静态页、启动恢复任务）
 # 使用方法：uvicorn main:app --host 0.0.0.0 --port 8000
 # 依赖环境：pip/conda 见 backend/requirements.txt
-# 生成时间：2026-07-16
+# 生成时间：2026-07-21
 # ==================================================
+
+from __future__ import annotations
+
 import logging
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -14,41 +19,64 @@ from fastapi.staticfiles import StaticFiles
 
 from api.auth import router as auth_router
 from api.routes import router
-from config import TASKS_DIR, USERS_DB
+from config import (
+    SKIP_AMBER_REPAIR,
+    SKIP_AUTODL_DISPATCH,
+    TASKS_DIR,
+    USERS_DB,
+    assert_production_secrets,
+    cors_allow_origins,
+)
 from models import load_tasks_from_disk
 from user_store import init_db
-from engine.env_check import repair_ambertools
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="GROMACS MD Simulation Setup Tool")
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """应用启动/关闭：恢复任务、调度、环境修复（均可配置跳过）。"""
+    assert_production_secrets()
+    load_tasks_from_disk(TASKS_DIR)
+    init_db(Path(USERS_DB))
+
+    if not SKIP_AUTODL_DISPATCH:
+        try:
+            from engine.autodl_runner import dispatch_queued_jobs
+
+            threading.Thread(target=dispatch_queued_jobs, daemon=True).start()
+        except Exception as e:
+            logger.warning("启动时 MD 任务调度失败: %s", e)
+    else:
+        logger.info("已跳过启动时 AutoDL 调度（WEBMD_SKIP_AUTODL_DISPATCH）")
+
+    if not SKIP_AMBER_REPAIR:
+        try:
+            from engine.env_check import repair_ambertools
+
+            fixed = repair_ambertools()
+            if fixed:
+                logger.info("启动时 AmberTools 自动修复: %s", ", ".join(fixed))
+        except Exception as e:
+            logger.warning("启动时 AmberTools 自动修复失败: %s", e)
+    else:
+        logger.info("已跳过 AmberTools 修复（WEBMD_SKIP_AMBER_REPAIR）")
+
+    yield
+
+
+app = FastAPI(title="GROMACS MD Simulation Setup Tool", lifespan=lifespan)
+
+_origins = cors_allow_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_origins,
+    # 通配源时浏览器不允许 credentials；生产白名单可开
+    allow_credentials=("*" not in _origins),
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# 启动时恢复历史任务，并尝试从 conda 缓存修复 AmberTools
-load_tasks_from_disk(TASKS_DIR)
-init_db(Path(USERS_DB))
-
-# 启动后尝试调度排队中的 MD 任务
-try:
-    from engine.autodl_runner import dispatch_queued_jobs
-    import threading
-
-    threading.Thread(target=dispatch_queued_jobs, daemon=True).start()
-except Exception as _md_e:
-    logging.warning("启动时 MD 任务调度失败: %s", _md_e)
-try:
-    _fixed = repair_ambertools()
-    if _fixed:
-        logging.info("启动时 AmberTools 自动修复: %s", ", ".join(_fixed))
-except Exception as _e:
-    logging.warning("启动时 AmberTools 自动修复失败: %s", _e)
 
 app.include_router(auth_router)
 app.include_router(router)

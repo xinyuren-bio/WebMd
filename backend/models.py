@@ -1,3 +1,10 @@
+# ==================================================
+# 功能说明：任务状态模型与磁盘持久化（task_meta.json）
+# 使用方法：由 API / 流水线读写 tasks 字典
+# 依赖环境：Python 标准库
+# 生成时间：2026-07-21
+# ==================================================
+
 import enum
 import json
 import logging
@@ -174,7 +181,7 @@ class Task:
             "autodl_ssh_host": self.autodl_ssh_host,
             "autodl_ssh_port": self.autodl_ssh_port,
             "autodl_ssh_user": self.autodl_ssh_user,
-            "autodl_ssh_password": self.autodl_ssh_password,
+            # 安全：SSH 密码仅驻留进程内存，不写入 task_meta.json
             "autodl_server_id": self.autodl_server_id,
             "md_completed_at": self.md_completed_at,
             "analysis_summary": self.analysis_summary,
@@ -210,7 +217,8 @@ class Task:
                 autodl_ssh_host=data.get("autodl_ssh_host", ""),
                 autodl_ssh_port=int(data.get("autodl_ssh_port", 22) or 22),
                 autodl_ssh_user=data.get("autodl_ssh_user", "root"),
-                autodl_ssh_password=data.get("autodl_ssh_password", ""),
+                # 历史 meta 中的明文密码忽略，重启后需管理员重新填写
+                autodl_ssh_password="",
                 autodl_server_id=data.get("autodl_server_id", ""),
                 md_completed_at=data.get("md_completed_at"),
                 analysis_summary=data.get("analysis_summary", ""),

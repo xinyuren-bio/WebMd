@@ -6,10 +6,18 @@ __pycache__/
 venv/
 .env
 
-# 运行时任务数据（不上传）
+# 运行时任务与用户数据（勿提交）
 backend/tasks/
 backend/data/
 backend/.env
+
+# 本地测试结构 / 用户上传样例（勿提交）
+users/
+*.xtc
+*.trr
+*.tpr
+*.edr
+*.cpt
 
 # macOS
 .DS_Store
@@ -17,3 +25,9 @@ backend/.env
 # IDE
 .vscode/
 .idea/
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/

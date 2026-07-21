@@ -1,0 +1,17 @@
+[Unit]
+Description=WebMD FastAPI
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/WebMd/backend
+EnvironmentFile=-/opt/WebMd/backend/.env
+Environment=PATH=/root/miniconda3/envs/md_web/bin:/usr/bin
+ExecStart=/opt/WebMd/deploy/start.sh
+Restart=always
+RestartSec=5
+# OOM 后尽量拉起，避免整站长期 502
+OOMPolicy=continue
+
+[Install]
+WantedBy=multi-user.target

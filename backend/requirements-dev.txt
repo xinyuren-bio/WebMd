@@ -1,0 +1,4 @@
+# 开发 / 测试依赖（生产可不装）
+-r requirements.txt
+pytest>=8.0
+ruff>=0.6
