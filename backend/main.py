@@ -22,6 +22,9 @@ from api.routes import router
 from config import (
     SKIP_AMBER_REPAIR,
     SKIP_AUTODL_DISPATCH,
+    SKIP_TASK_CLEANUP,
+    TASK_CLEANUP_INTERVAL_SEC,
+    TASK_RETENTION_DAYS,
     TASKS_DIR,
     USERS_DB,
     assert_production_secrets,
@@ -62,6 +65,20 @@ async def lifespan(_app: FastAPI):
             logger.warning("启动时 AmberTools 自动修复失败: %s", e)
     else:
         logger.info("已跳过 AmberTools 修复（WEBMD_SKIP_AMBER_REPAIR）")
+
+    if not SKIP_TASK_CLEANUP:
+        try:
+            from task_cleanup import start_cleanup_scheduler
+
+            start_cleanup_scheduler(
+                TASKS_DIR,
+                retention_days=TASK_RETENTION_DAYS,
+                interval_sec=TASK_CLEANUP_INTERVAL_SEC,
+            )
+        except Exception as e:
+            logger.warning("启动任务清理调度失败: %s", e)
+    else:
+        logger.info("已跳过任务目录清理（WEBMD_SKIP_TASK_CLEANUP）")
 
     yield
 

@@ -143,6 +143,13 @@ SKIP_AUTODL_DISPATCH = os.environ.get("WEBMD_SKIP_AUTODL_DISPATCH", "0").strip()
 SKIP_AMBER_REPAIR = os.environ.get("WEBMD_SKIP_AMBER_REPAIR", "0").strip().lower() in (
     "1", "true", "yes",
 )
+SKIP_TASK_CLEANUP = os.environ.get("WEBMD_SKIP_TASK_CLEANUP", "0").strip().lower() in (
+    "1", "true", "yes",
+)
+
+# 任务目录保留天数（超过则自动删除）；清理间隔秒数（默认每天）
+TASK_RETENTION_DAYS = int(os.environ.get("WEBMD_TASK_RETENTION_DAYS", "7"))
+TASK_CLEANUP_INTERVAL_SEC = int(os.environ.get("WEBMD_TASK_CLEANUP_INTERVAL_SEC", "86400"))
 
 
 def is_production() -> bool:
