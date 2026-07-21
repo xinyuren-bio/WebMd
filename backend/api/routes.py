@@ -34,7 +34,15 @@ from config import (
     PAYMENT_ENABLED, PAYMENT_AMOUNT, PAYMENT_QR_URL, WECHAT_QR_URL, PAYMENT_CURRENCY,
     TIP_ENABLED, TIP_QR_URL, ANALYTICS_FILE, AUTODL_MARKET_URL, MD_CALLBACK_SECRET,
 )
-from payment_util import calc_payment_amount, verify_admin_key, price_for_sim_ns, qr_urls_for_sim_ns
+from payment_util import (
+    calc_payment_amount,
+    verify_admin_key,
+    price_for_sim_ns,
+    qr_urls_for_sim_ns,
+    can_use_free_10ns,
+    free_10ns_remaining,
+    FREE_10NS_QUOTA,
+)
 from analytics_util import record_visit, get_analytics_stats, collect_md_completion_stats
 from email_util import (
     send_admin_payment_notify,
@@ -177,9 +185,11 @@ def _task_owner_or_404(task_id: str, user: dict) -> Task:
 
 
 def _payment_payload(task: Task) -> dict:
-    """组装任务支付信息（金额与收款码随模拟时长变化）。"""
+    """组装任务支付信息（金额与收款码随模拟时长变化；含免费额度）。"""
     sim_ns = float(task.params.get("simulation_time_ns", 100))
-    base = price_for_sim_ns(sim_ns)
+    free_ok = can_use_free_10ns(task, tasks)
+    remain = free_10ns_remaining(task.user_id, tasks) if task.user_id else 0
+    base = price_for_sim_ns(sim_ns, user_id=task.user_id, all_tasks=tasks)
     qr_url, wechat_qr_url = qr_urls_for_sim_ns(sim_ns)
 
     if task.payment_status in ("pending", "paid") and task.payment_amount is not None:
@@ -203,6 +213,9 @@ def _payment_payload(task: Task) -> dict:
         "currency": PAYMENT_CURRENCY,
         "qr_url": qr_url,
         "wechat_qr_url": wechat_qr_url,
+        "free_eligible": bool(free_ok and task.payment_status == "unpaid"),
+        "free_quota_remaining": remain,
+        "free_quota_total": FREE_10NS_QUOTA,
     }
 
 
@@ -652,7 +665,11 @@ async def get_task_public(task_id: str):
     d = task.to_public_dict()
     if d.get("payment_amount") is None:
         sim_ns = float(task.params.get("simulation_time_ns", 100))
-        d["payment_amount"] = calc_payment_amount(task.task_id, price_for_sim_ns(sim_ns), task.user_id)
+        d["payment_amount"] = calc_payment_amount(
+            task.task_id,
+            price_for_sim_ns(sim_ns, user_id=task.user_id, all_tasks=tasks),
+            task.user_id,
+        )
     return d
 
 
@@ -673,6 +690,7 @@ async def get_payment_config():
         "verify_mode": "manual",
         "md_max_ns": MD_MAX_NS,
         "pricing": pricing_table(),
+        "free_10ns_quota": FREE_10NS_QUOTA,
     }
 
 
@@ -685,10 +703,11 @@ async def get_task_payment(task_id: str, user: dict = Depends(get_current_user))
 @router.post("/tasks/{task_id}/payment/confirm")
 async def confirm_task_payment(
     task_id: str,
+    background_tasks: BackgroundTasks,
     payer_note: str = Form(default=""),
     user: dict = Depends(get_current_user),
 ):
-    """用户声明已支付，进入待核实状态（需管理员确认后才可下载）。"""
+    """用户声明已支付，进入待核实；若符合 10 ns 免费额度则立即解锁。"""
     if not PAYMENT_ENABLED:
         raise HTTPException(status_code=403, detail="付费功能未开启")
     task = _task_owner_or_404(task_id, user)
@@ -699,9 +718,32 @@ async def confirm_task_payment(
     if task.payment_status == "pending":
         return _payment_payload(task)
 
+    # 10 ns 免费额度：直接标记已支付，无需管理员核实
+    if can_use_free_10ns(task, tasks):
+        task.payment_amount = 0.0
+        task.paid = True
+        task.paid_at = time.time()
+        task.payment_status = "paid"
+        task.payment_claimed_at = time.time()
+        task.payment_note = "10ns免费额度"
+        if task.md_status in ("none", "failed"):
+            task.md_status = "queued"
+        task.save()
+        remain = free_10ns_remaining(task.user_id, tasks)
+        logger.info(
+            "任务 %s 使用 10 ns 免费额度解锁，用户剩余 %d/%d",
+            task_id, remain, FREE_10NS_QUOTA,
+        )
+        background_tasks.add_task(_dispatch_after_approve, task_id)
+        return _payment_payload(task)
+
     task.payment_amount = calc_payment_amount(
         task.task_id,
-        price_for_sim_ns(float(task.params.get("simulation_time_ns", 100))),
+        price_for_sim_ns(
+            float(task.params.get("simulation_time_ns", 100)),
+            user_id=task.user_id,
+            all_tasks=tasks,
+        ),
         task.user_id,
     )
     task.payment_status = "pending"

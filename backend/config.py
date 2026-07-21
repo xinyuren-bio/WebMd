@@ -89,9 +89,9 @@ ALLOWED_SALT_TYPES = ("nacl", "kcl")
 WATER_MODEL = "tip3p"
 PROTEIN_FF = "amber14sb"
 
-# 付费下载 / MD 模拟（默认开启，¥240）
+# 付费下载 / MD 模拟（默认开启；金额以 payment_util 按时长为准）
 PAYMENT_ENABLED = os.environ.get("WEBMD_PAYMENT_ENABLED", "1").strip().lower() not in ("0", "false", "no")
-PAYMENT_AMOUNT = float(os.environ.get("WEBMD_MD_PRICE", "240"))
+PAYMENT_AMOUNT = float(os.environ.get("WEBMD_MD_PRICE", "147.70"))
 MD_MAX_NS = float(os.environ.get("WEBMD_MD_MAX_NS", "200"))
 PAYMENT_QR_URL = "/assets/images/pay.jpg"
 WECHAT_QR_URL = os.environ.get("WEBMD_WECHAT_QR_URL", "/assets/images/wechat_pay.png")

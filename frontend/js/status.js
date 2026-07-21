@@ -144,8 +144,12 @@
     }
     if (d.status === "completed") {
       if (d.payment_status === "unpaid" && d.can_pay) {
-        var payAmt = d.payment_amount != null ? Number(d.payment_amount).toFixed(0) : "150/240";
-        html += "<p class=\"status-hint\">请登录网站完成 ¥" + payAmt + " 支付后，方可下载文件包并启动 MD 模拟。</p>";
+        var payAmt = d.payment_amount != null ? Number(d.payment_amount).toFixed(2) : "147.70";
+        if (Number(d.payment_amount) === 0 || (d.simulation_time_ns === 10 && d.can_pay)) {
+          html += "<p class=\"status-hint\">10 ns 任务可使用免费额度解锁（每人 5 次）；请登录网站点击启动。</p>";
+        } else {
+          html += "<p class=\"status-hint\">请登录网站完成 ¥" + payAmt + " 支付后，方可下载文件包并启动 MD 模拟。</p>";
+        }
         html += "<p><a class=\"btn btn-primary\" href=\"/?task="
           + encodeURIComponent(taskId)
           + "#prepare\">前往支付</a></p>";

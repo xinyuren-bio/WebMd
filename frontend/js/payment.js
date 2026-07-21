@@ -13,6 +13,7 @@
   var wechatQrImg = document.getElementById("payment-wechat-qr");
   var amountEl = document.getElementById("payment-amount");
   var amountHintEl = document.getElementById("payment-amount-hint");
+  var amountHintWrap = document.getElementById("payment-amount-hint-wrap");
   var amountNoteEl = document.getElementById("payment-amount-note");
   var modalTitleEl = document.getElementById("payment-modal-title");
   var taskIdEl = document.getElementById("payment-task-id");
@@ -23,12 +24,20 @@
   var tipSection = document.getElementById("tip-section");
   var tipQr = document.getElementById("tip-qr");
   var tipTaskId = document.getElementById("tip-task-id");
+  var qrRow = document.getElementById("payment-qr-row");
+  var freeHint = document.getElementById("payment-free-hint");
+  var freeRemainEl = document.getElementById("payment-free-remain");
+  var freeTotalEl = document.getElementById("payment-free-total");
+  var amountLine = document.querySelector("#payment-modal .payment-amount");
+  var paymentNoteEl = document.querySelector("#payment-modal .payment-note");
+  var paymentTaskIdHint = document.querySelector("#payment-modal .payment-task-id");
 
   var currentTaskId = null;
-  var paymentConfig = { amount: 240, qr_url: "/assets/images/pay.jpg", wechat_qr_url: "/assets/images/wechat_pay.png", enabled: true, tip_enabled: false };
+  var paymentConfig = { amount: 147.7, qr_url: "/assets/images/pay_150.jpg", wechat_qr_url: "/assets/images/wechat_pay_150.png", enabled: true, tip_enabled: false, free_10ns_quota: 5 };
   var paymentEnabled = true;
   var tipEnabled = false;
   var pollTimer = null;
+  var freeMode = false;
 
   function apiFetch(url, opts) {
     if (window.WebMdAuth && window.WebMdAuth.apiFetch) {
@@ -78,7 +87,35 @@
     if (amountEl) amountEl.textContent = a;
     if (amountHintEl) amountHintEl.textContent = a;
     if (amountNoteEl) amountNoteEl.textContent = a;
-    if (modalTitleEl) modalTitleEl.textContent = "支付 ¥" + a + " 启动 MD 模拟";
+    if (modalTitleEl) {
+      modalTitleEl.textContent = freeMode
+        ? "使用免费额度启动 MD"
+        : "支付 ¥" + a + " 启动 MD 模拟";
+    }
+  }
+
+  function setFreeModeUi(on, data) {
+    freeMode = !!on;
+    if (qrRow) qrRow.classList.toggle("hidden", freeMode);
+    if (amountHintWrap) amountHintWrap.classList.toggle("hidden", freeMode);
+    if (amountLine) amountLine.classList.toggle("hidden", freeMode);
+    if (paymentNoteEl) paymentNoteEl.classList.toggle("hidden", freeMode);
+    if (paymentTaskIdHint) paymentTaskIdHint.classList.toggle("hidden", freeMode);
+    if (payerNoteEl) {
+      payerNoteEl.classList.toggle("hidden", freeMode);
+      var lab = document.querySelector('label[for="payment-payer-note"]');
+      if (lab) lab.classList.toggle("hidden", freeMode);
+    }
+    if (freeHint) {
+      freeHint.classList.toggle("hidden", !freeMode);
+      if (freeMode && data) {
+        if (freeRemainEl) freeRemainEl.textContent = String(data.free_quota_remaining != null ? data.free_quota_remaining : "—");
+        if (freeTotalEl) freeTotalEl.textContent = String(data.free_quota_total != null ? data.free_quota_total : 5);
+      }
+    }
+    if (btnConfirm) {
+      btnConfirm.textContent = freeMode ? "使用免费额度" : "我已完成支付";
+    }
   }
 
   function formatAmount(n) {
@@ -123,7 +160,7 @@
       });
   }
 
-  function updatePayButtonLabel(status, amount) {
+  function updatePayButtonLabel(status, amount, data) {
     if (!btnPayDownload) return;
     btnPayDownload.disabled = false;
     if (status === "paid") {
@@ -134,6 +171,12 @@
     if (status === "pending") {
       btnPayDownload.disabled = true;
       btnPayDownload.textContent = "支付核实中…";
+      return;
+    }
+    if (data && data.free_eligible) {
+      var left = data.free_quota_remaining != null ? data.free_quota_remaining : "?";
+      var tot = data.free_quota_total != null ? data.free_quota_total : 5;
+      btnPayDownload.textContent = "免费启动 10 ns（剩余 " + left + "/" + tot + "）";
       return;
     }
     var a = amount != null ? formatAmount(amount) : formatAmount(paymentConfig.amount);
@@ -152,6 +195,11 @@
     var status = paymentData && paymentData.payment_status
       ? paymentData.payment_status
       : (paymentData && paymentData.paid ? "paid" : "unpaid");
+    var isFree = !!(paymentData && paymentData.free_eligible && status === "unpaid");
+    setFreeModeUi(isFree, paymentData || {});
+    if (paymentData && paymentData.payment_amount != null) {
+      setAmountDisplay(paymentData.payment_amount);
+    }
 
     if (status === "pending") {
       if (pendingBox) pendingBox.classList.remove("hidden");
@@ -180,23 +228,31 @@
     if (!data) return;
     var amount = data.payment_amount != null ? data.payment_amount : data.amount;
     var status = data.payment_status || (data.paid ? "paid" : "unpaid");
+    var isFree = !!(data.free_eligible && status === "unpaid");
 
     if (data.qr_url && qrImg) qrImg.src = data.qr_url;
     if (data.wechat_qr_url && wechatQrImg) wechatQrImg.src = data.wechat_qr_url;
     if (amount != null) {
       paymentConfig.amount = amount;
+      setFreeModeUi(isFree, data);
       setAmountDisplay(amount);
+    } else {
+      setFreeModeUi(isFree, data);
     }
 
     if (status === "paid") {
       stopPolling();
+      setFreeModeUi(false, data);
       if (btnPayDownload) btnPayDownload.classList.add("hidden");
       if (btnDownload) showDownloadBtn();
       if (downloadHint) {
-        downloadHint.textContent = "支付已核实，可下载文件包；MD 模拟将自动排队运行";
+        downloadHint.textContent = Number(amount) <= 0
+          ? "已使用免费额度，可下载文件包；MD 模拟将排队（需管理员配置算力）"
+          : "支付已核实，可下载文件包；MD 模拟将自动排队运行";
       }
       hideTipSection();
     } else if (status === "pending") {
+      setFreeModeUi(false, data);
       if (btnDownload) hideDownloadBtn();
       if (downloadHint) {
         downloadHint.textContent = "支付核实中，请稍候。核实通过后将自动出现下载按钮";
@@ -206,10 +262,15 @@
       stopPolling();
       if (btnPayDownload) btnPayDownload.classList.remove("hidden");
       if (btnDownload) hideDownloadBtn();
-      updatePayButtonLabel("unpaid", amount);
+      updatePayButtonLabel("unpaid", amount, data);
       if (downloadHint) {
-        var a = amount != null ? formatAmount(amount) : formatAmount(paymentConfig.amount);
-        downloadHint.textContent = "前处理已完成。支付 ¥" + a + " 后等待核实，通过后可下载并启动 MD";
+        if (isFree) {
+          var left = data.free_quota_remaining != null ? data.free_quota_remaining : "?";
+          downloadHint.textContent = "前处理已完成。可使用 10 ns 免费额度（剩余 " + left + " 次）直接启动";
+        } else {
+          var a = amount != null ? formatAmount(amount) : formatAmount(paymentConfig.amount);
+          downloadHint.textContent = "前处理已完成。支付 ¥" + a + " 后等待核实，通过后可下载并启动 MD";
+        }
       }
     }
   }
@@ -262,6 +323,10 @@
       })
       .then(function (data) {
         applyPaymentData(currentTaskId, data);
+        if (data.payment_status === "paid") {
+          hideModal();
+          return;
+        }
         if (pendingBox) pendingBox.classList.remove("hidden");
         if (modalActions) modalActions.classList.add("hidden");
         if (payerNoteEl) payerNoteEl.disabled = true;
@@ -275,7 +340,7 @@
       .finally(function () {
         if (btnConfirm) {
           btnConfirm.disabled = false;
-          btnConfirm.textContent = "我已完成支付";
+          btnConfirm.textContent = freeMode ? "使用免费额度" : "我已完成支付";
         }
       });
   }

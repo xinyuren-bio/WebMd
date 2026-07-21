@@ -38,7 +38,7 @@
   <div class="site-announcement-inner">
     <p class="site-announcement-text">
       <strong>公告</strong>
-      100 ns 模拟费用已调整为 ¥150。网页端暂不提供轨迹在线分析；模拟完成后，系统会自动将分析报告发到您的注册邮箱，请注意查收。
+      注册即送 <strong>5 次 × 10 ns</strong> 免费试算；正式生产 <strong>100 ns</strong> 为 <strong>¥147.70</strong>。网页端暂不提供轨迹在线分析；模拟完成后，分析报告会发到注册邮箱。
     </p>
     <button type="button" class="site-announcement-close" id="site-announcement-close" aria-label="关闭公告">×</button>
   </div>
@@ -531,8 +531,9 @@
       <button type="button" class="payment-modal-close" id="payment-modal-close" aria-label="关闭">×</button>
       <h3 id="payment-modal-title">支付启动 MD 模拟</h3>
       <p class="payment-amount">请支付 <strong>¥<span id="payment-amount">—</span></strong></p>
-      <p class="payment-amount-hint">扫码后金额已预设为 <strong>¥<span id="payment-amount-hint">—</span></strong>，选择支付宝或微信，确认金额后输入支付密码即可</p>
-      <div class="payment-qr-row">
+      <p class="payment-amount-hint" id="payment-amount-hint-wrap">扫码后金额已预设为 <strong>¥<span id="payment-amount-hint">—</span></strong>，选择支付宝或微信，确认金额后输入支付密码即可</p>
+      <p class="payment-free-hint hidden" id="payment-free-hint">本任务可使用 <strong>10 ns 免费额度</strong>（剩余 <span id="payment-free-remain">—</span>/<span id="payment-free-total">5</span> 次），点击下方按钮即可解锁下载并排队 MD，无需付款。</p>
+      <div class="payment-qr-row" id="payment-qr-row">
         <div class="payment-qr-item">
           <p class="payment-qr-label">支付宝</p>
           <div class="payment-qr-wrap">
@@ -726,7 +727,7 @@
           <tr><th>参数</th><th>说明</th><th>默认参考</th></tr>
         </thead>
         <tbody>
-          <tr><td>模拟时长</td><td>生产 MD 时长，可选 10 / 100 / 200 ns（对应 ¥10 / ¥150 / ¥240）</td><td>100 ns</td></tr>
+          <tr><td>模拟时长</td><td>生产 MD 时长：10 ns（每人 5 次免费，用尽后 ¥10）/ 100 ns（¥147.70）/ 200 ns（¥240）</td><td>100 ns</td></tr>
           <tr><td>温度 (K)</td><td>NVT / NPT 控温目标</td><td>310</td></tr>
           <tr><td>压强 (bar)</td><td>NPT 控压目标</td><td>1.0</td></tr>
           <tr><td>时间步长 (fs)</td><td>积分步长</td><td>2</td></tr>
@@ -1009,14 +1010,14 @@
       <article class="sim-notice-tier">
         <header>
           <strong>10 ns</strong>
-          <span class="sim-notice-price">¥10</span>
+          <span class="sim-notice-price">免费×5</span>
         </header>
-        <p>短时预模拟，低成本试手。用于检查体系能否正常启动、结构是否稳定，并确认整套流程跑得通；适合正式长程模拟前的快速排查。</p>
+        <p>短时预模拟。注册用户每人 5 次免费额度，用于检查体系能否正常启动；用尽后单次 ¥10。适合正式长程模拟前的快速排查。</p>
       </article>
       <article class="sim-notice-tier sim-notice-tier-main">
         <header>
           <strong>100 ns</strong>
-          <span class="sim-notice-price">¥150</span>
+          <span class="sim-notice-price">¥147.70</span>
         </header>
         <p>标准正式模拟。可产出 RMSD、氢键、自由能景观等全套分析数据，满足正式实验与论文写作需要。</p>
       </article>
@@ -1040,7 +1041,7 @@
 <script src="/js/ngl.js"></script>
 <script src="/js/pdbqt_poses.js?v=20260717a"></script>
 <script src="/js/viewer.js?v=20260717a"></script>
-<script src="/js/payment.js?v=20260720b"></script>
+<script src="/js/payment.js?v=20260721e"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
 <script src="/js/app.js?v=20260721d"></script>
 <script src="/js/interaction_analysis.js"></script>
