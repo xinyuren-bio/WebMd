@@ -31,6 +31,10 @@ coulombtype = PME
 rcoulomb    = {cutoff}
 vdwtype     = Cut-off
 rvdw        = {cutoff}
+; 长程范德华色散校正：补偿 cutoff 截断丢失的长程色散吸引，
+; 对能量与压强同时校正（EnerPres），避免 NPT 密度系统性偏低。
+; 四个阶段统一开启，保证 EM/NVT/NPT/生产处于同一势能面。
+DispCorr    = EnerPres
 pbc         = xyz
 """
 
@@ -50,6 +54,10 @@ coulombtype = PME
 rcoulomb    = {cutoff}
 vdwtype     = Cut-off
 rvdw        = {cutoff}
+; 长程范德华色散校正：补偿 cutoff 截断丢失的长程色散吸引，
+; 对能量与压强同时校正（EnerPres），避免 NPT 密度系统性偏低。
+; 四个阶段统一开启，保证 EM/NVT/NPT/生产处于同一势能面。
+DispCorr    = EnerPres
 pbc         = xyz
 constraints = {constraints}
 constraint-algorithm = lincs
@@ -80,6 +88,10 @@ coulombtype = PME
 rcoulomb    = {cutoff}
 vdwtype     = Cut-off
 rvdw        = {cutoff}
+; 长程范德华色散校正：补偿 cutoff 截断丢失的长程色散吸引，
+; 对能量与压强同时校正（EnerPres），避免 NPT 密度系统性偏低。
+; 四个阶段统一开启，保证 EM/NVT/NPT/生产处于同一势能面。
+DispCorr    = EnerPres
 pbc         = xyz
 constraints = {constraints}
 constraint-algorithm = lincs
@@ -112,6 +124,10 @@ coulombtype = PME
 rcoulomb    = {cutoff}
 vdwtype     = Cut-off
 rvdw        = {cutoff}
+; 长程范德华色散校正：补偿 cutoff 截断丢失的长程色散吸引，
+; 对能量与压强同时校正（EnerPres），避免 NPT 密度系统性偏低。
+; 四个阶段统一开启，保证 EM/NVT/NPT/生产处于同一势能面。
+DispCorr    = EnerPres
 pbc         = xyz
 constraints = {constraints}
 constraint-algorithm = lincs
