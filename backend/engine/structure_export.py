@@ -17,6 +17,21 @@ _SOLVENT_ION_RESNAMES = frozenset({
     "NA+", "CL-", "K+", "MG2+", "CA2+", "ZN2+",
 })
 
+# 标准蛋白残基名（20 种氨基酸 + Amber 质子化/端基/二硫变体）。
+# 用途：区分蛋白与配体——凡不在此集合、又非水/离子的残基一律视为配体，
+# 从而把配体拆到独立链号并标记为 HETATM。
+_PROTEIN_RESNAMES = frozenset({
+    "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "ILE",
+    "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
+    "HID", "HIE", "HIP", "ASH", "GLH", "LYN", "CYM", "CYX",
+    "HSD", "HSE", "HSP", "ACE", "NME", "NMA",
+})
+
+
+def _is_protein_res(r: str) -> bool:
+    """判断残基是否为标准蛋白残基。"""
+    return r.strip().upper() in _PROTEIN_RESNAMES
+
 
 def _is_solvent_or_ion(r: str) -> bool:
     """判断残基是否为水分子或离子。"""
@@ -97,14 +112,42 @@ def export_complex_pdb(gro_path: str, out_path: str) -> str:
         raise ValueError("gro 中未找到蛋白或配体原子（可能全部被识别为溶剂/离子）")
 
     lines = ["REMARK   蛋白-配体复合物（已去除水分子与离子）", "REMARK   来源: " + gro.name]
-    for i, a in enumerate(kept, start=1):
-        rec = "HETATM" if a["resname"].upper() in {"UNL", "MOL", "LIG", "UNK"} else "ATOM  "
+    # 链号分配：蛋白统一 A 链；每个不同的配体残基按出现顺序分配 B、C… 链，
+    # 使蛋白与各配体在结构上彼此独立（前端 NGL 会据此分色，配体标为 HETATM）。
+    _LIG_CHAIN_LETTERS = "BCDEFGHIJKLMNOPQRSTUVWXYZ"
+    lig_chain_map: dict[int, str] = {}
+
+    def _chain_for(a: dict) -> tuple[str, str]:
+        """返回 (记录类型, 链号)：蛋白→(ATOM, A)，配体→(HETATM, B/C…)。"""
+        if _is_protein_res(a["resname"]):
+            return "ATOM  ", "A"
+        rn = a["resnr"]
+        if rn not in lig_chain_map:
+            idx = len(lig_chain_map)
+            # 配体链号用尽 25 个字母后统一落到 Z（极端多配体的兜底）
+            lig_chain_map[rn] = _LIG_CHAIN_LETTERS[idx] if idx < len(_LIG_CHAIN_LETTERS) else "Z"
+        return "HETATM", lig_chain_map[rn]
+
+    serial = 0
+    prev_chain: str | None = None
+    for a in kept:
+        rec, chain = _chain_for(a)
+        # 链号切换处插入 TER，收束上一条链
+        if prev_chain is not None and chain != prev_chain:
+            serial += 1
+            lines.append(f"TER   {serial:5d}")
+        serial += 1
         elem = _guess_element(a["atomname"])
         lines.append(
-            f"{rec}{i:5d} {_pdb_atom_name(a['atomname'])} "
-            f"{a['resname'][:3]:>3s} A{a['resnr']:4d}    "
+            f"{rec}{serial:5d} {_pdb_atom_name(a['atomname'])} "
+            f"{a['resname'][:3]:>3s} {chain}{a['resnr']:4d}    "
             f"{a['x']:8.3f}{a['y']:8.3f}{a['z']:8.3f}  1.00  0.00          {elem:>2s}"
         )
+        prev_chain = chain
+    # 末尾补 TER 收束最后一条链
+    if prev_chain is not None:
+        serial += 1
+        lines.append(f"TER   {serial:5d}")
     lines.append("END")
 
     out.parent.mkdir(parents=True, exist_ok=True)
