@@ -39,6 +39,9 @@ from payment_util import (
     verify_admin_key,
     price_for_sim_ns,
     qr_urls_for_sim_ns,
+    price_for,
+    qr_urls_for,
+    size_tier_for,
     can_use_free_10ns,
     free_10ns_remaining,
     FREE_10NS_QUOTA,
@@ -184,16 +187,37 @@ def _task_owner_or_404(task_id: str, user: dict) -> Task:
 
 
 
+def _resolved_amount(task: Task):
+    """计算任务应付金额；面议档（>30 万原子）返回 None，交由客服线下确认。"""
+    atoms = int(getattr(task, "atom_count", 0) or 0)
+    base = price_for(
+        float(task.params.get("simulation_time_ns", 100)),
+        atom_count=atoms,
+        user_id=task.user_id,
+        all_tasks=tasks,
+    )
+    if base is None:
+        return None
+    return calc_payment_amount(task.task_id, base, task.user_id)
+
+
 def _payment_payload(task: Task) -> dict:
-    """组装任务支付信息（金额与收款码随模拟时长变化；含免费额度）。"""
+    """组装任务支付信息（金额与收款码按体系大小分档；含免费额度与面议）。"""
     sim_ns = float(task.params.get("simulation_time_ns", 100))
+    atoms = int(getattr(task, "atom_count", 0) or 0)
     free_ok = can_use_free_10ns(task, tasks)
     remain = free_10ns_remaining(task.user_id, tasks) if task.user_id else 0
-    base = price_for_sim_ns(sim_ns, user_id=task.user_id, all_tasks=tasks)
-    qr_url, wechat_qr_url = qr_urls_for_sim_ns(sim_ns)
+    # 体系分档信息（原子数未知时为空 dict，走时长定价回退）
+    size_info = size_tier_for(atoms)
+    negotiable = bool(size_info.get("negotiable"))
+    base = price_for(sim_ns, atom_count=atoms, user_id=task.user_id, all_tasks=tasks)
+    qr_url, wechat_qr_url = qr_urls_for(sim_ns, atom_count=atoms)
 
     if task.payment_status in ("pending", "paid") and task.payment_amount is not None:
         amount = task.payment_amount
+    elif base is None:
+        # 面议（>30 万原子）：不自动定价，等待客服确认
+        amount = None
     else:
         amount = calc_payment_amount(task.task_id, base, task.user_id)
         if task.payment_amount is None:
@@ -210,6 +234,10 @@ def _payment_payload(task: Task) -> dict:
         "payment_claimed_at": task.payment_claimed_at,
         "amount": amount,
         "simulation_time_ns": sim_ns,
+        "atom_count": atoms,
+        "size_tier": size_info.get("tier"),
+        "negotiable": negotiable,
+        "support_qr_url": size_info.get("qr_url") if negotiable else "",
         "currency": PAYMENT_CURRENCY,
         "qr_url": qr_url,
         "wechat_qr_url": wechat_qr_url,
@@ -663,20 +691,24 @@ async def get_task_public(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     d = task.to_public_dict()
-    if d.get("payment_amount") is None:
+    atoms = int(getattr(task, "atom_count", 0) or 0)
+    size_info = size_tier_for(atoms)
+    d["size_tier"] = size_info.get("tier")
+    d["negotiable"] = bool(size_info.get("negotiable"))
+    if size_info.get("negotiable"):
+        d["support_qr_url"] = size_info.get("qr_url")
+    if d.get("payment_amount") is None and not size_info.get("negotiable"):
         sim_ns = float(task.params.get("simulation_time_ns", 100))
-        d["payment_amount"] = calc_payment_amount(
-            task.task_id,
-            price_for_sim_ns(sim_ns, user_id=task.user_id, all_tasks=tasks),
-            task.user_id,
-        )
+        base = price_for(sim_ns, atom_count=atoms, user_id=task.user_id, all_tasks=tasks)
+        if base is not None:
+            d["payment_amount"] = calc_payment_amount(task.task_id, base, task.user_id)
     return d
 
 
 @router.get("/payment/config")
 async def get_payment_config():
     """返回付费/打赏配置。"""
-    from payment_util import pricing_table
+    from payment_util import pricing_table, size_pricing_table
 
     tip_on = TIP_ENABLED and not PAYMENT_ENABLED
     return {
@@ -690,6 +722,7 @@ async def get_payment_config():
         "verify_mode": "manual",
         "md_max_ns": MD_MAX_NS,
         "pricing": pricing_table(),
+        "size_pricing": size_pricing_table(),
         "free_10ns_quota": FREE_10NS_QUOTA,
     }
 
@@ -737,15 +770,20 @@ async def confirm_task_payment(
         background_tasks.add_task(_dispatch_after_approve, task_id)
         return _payment_payload(task)
 
-    task.payment_amount = calc_payment_amount(
-        task.task_id,
-        price_for_sim_ns(
-            float(task.params.get("simulation_time_ns", 100)),
-            user_id=task.user_id,
-            all_tasks=tasks,
-        ),
-        task.user_id,
+    atoms = int(getattr(task, "atom_count", 0) or 0)
+    base = price_for(
+        float(task.params.get("simulation_time_ns", 100)),
+        atom_count=atoms,
+        user_id=task.user_id,
+        all_tasks=tasks,
     )
+    # 面议档（>30 万原子）：不支持自助付款，引导联系客服微信
+    if base is None:
+        raise HTTPException(
+            status_code=400,
+            detail="该体系较大（>30 万原子），价格需面议，请添加客服微信确认后开通。",
+        )
+    task.payment_amount = calc_payment_amount(task.task_id, base, task.user_id)
     task.payment_status = "pending"
     task.payment_claimed_at = time.time()
     task.payment_note = (payer_note or "").strip()[:120]
@@ -778,11 +816,7 @@ async def list_pending_payments(admin_key: str = ""):
                 "task_id": t.task_id,
                 "user_id": t.user_id,
                 "user_email": u.get("email") if u else "",
-                "payment_amount": t.payment_amount or calc_payment_amount(
-                    t.task_id,
-                    price_for_sim_ns(float(t.params.get("simulation_time_ns", 100))),
-                    t.user_id,
-                ),
+                "payment_amount": t.payment_amount or _resolved_amount(t),
                 "payment_claimed_at": t.payment_claimed_at,
                 "payment_note": t.payment_note,
                 "created_at": t.created_at,
@@ -812,11 +846,8 @@ async def approve_task_payment(
     task.paid_at = time.time()
     task.payment_status = "paid"
     if not task.payment_amount:
-        task.payment_amount = calc_payment_amount(
-            task.task_id,
-            price_for_sim_ns(float(task.params.get("simulation_time_ns", 100))),
-            task.user_id,
-        )
+        # 面议档金额为 None，此处保持不动，由管理员按线下确认金额入账
+        task.payment_amount = _resolved_amount(task)
     if task.md_status in ("none", "failed"):
         task.md_status = "queued"
     task.save()

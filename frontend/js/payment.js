@@ -167,6 +167,13 @@
       btnPayDownload.classList.add("hidden");
       return;
     }
+    // 面议档（>30 万原子）：不支持自助付款，引导联系客服微信
+    if (data && data.negotiable) {
+      btnPayDownload.classList.remove("hidden");
+      btnPayDownload.disabled = true;
+      btnPayDownload.textContent = "体系较大 · 请加客服微信面议";
+      return;
+    }
     btnPayDownload.classList.remove("hidden");
     if (status === "pending") {
       btnPayDownload.disabled = true;
@@ -229,6 +236,29 @@
     var amount = data.payment_amount != null ? data.payment_amount : data.amount;
     var status = data.payment_status || (data.paid ? "paid" : "unpaid");
     var isFree = !!(data.free_eligible && status === "unpaid");
+
+    // 面议档（>30 万原子）：展示客服微信码，禁用自助付款
+    if (data.negotiable && status !== "paid") {
+      stopPolling();
+      if (data.qr_url && qrImg) qrImg.src = data.qr_url;
+      if (data.wechat_qr_url && wechatQrImg) wechatQrImg.src = data.wechat_qr_url;
+      setFreeModeUi(false, data);
+      if (amountEl) amountEl.textContent = "面议";
+      if (amountHintEl) amountHintEl.textContent = "面议";
+      if (amountNoteEl) amountNoteEl.textContent = "面议";
+      if (modalTitleEl) modalTitleEl.textContent = "体系较大，请添加客服微信面议";
+      if (btnDownload) hideDownloadBtn();
+      updatePayButtonLabel("unpaid", null, data);
+      if (downloadHint) {
+        downloadHint.textContent =
+          "该体系超过 30 万原子，价格需面议。请扫描客服微信二维码添加，确认后由客服为你开通。";
+      }
+      if (btnConfirm) {
+        btnConfirm.disabled = true;
+        btnConfirm.textContent = "请联系客服微信";
+      }
+      return;
+    }
 
     if (data.qr_url && qrImg) qrImg.src = data.qr_url;
     if (data.wechat_qr_url && wechatQrImg) wechatQrImg.src = data.wechat_qr_url;

@@ -1005,24 +1005,27 @@
     <button type="button" class="payment-modal-close" id="sim-notice-close" aria-label="关闭">×</button>
     <p class="sim-notice-eyebrow">使用须知</p>
     <h3 id="sim-notice-title">如何选择模拟时长？</h3>
-    <p class="sim-notice-lead">各档位流程相同，差别主要在采样时长与适用场景。建议按需求分步投入。</p>
+    <p class="sim-notice-lead">价格按<strong>体系大小（原子数）</strong>分档，与模拟时长无关。原子数在前处理完成后确定，届时会显示对应金额。</p>
     <div class="sim-notice-tiers">
       <article class="sim-notice-tier">
         <header>
-          <strong>10 ns</strong>
+          <strong>10 ns 预模拟</strong>
           <span class="sim-notice-price">免费×5</span>
         </header>
-        <p>短时预模拟。注册用户每人 5 次免费额度，用于检查体系能否正常启动；用尽后单次 ¥10。适合正式长程模拟前的快速排查。</p>
+        <p>注册用户每人 5 次免费额度，用于检查体系能否正常启动。建议正式长程模拟前先跑一次排查。</p>
       </article>
       <article class="sim-notice-tier sim-notice-tier-main">
         <header>
-          <strong>100 ns</strong>
-          <span class="sim-notice-price">¥147.70</span>
+          <strong>按体系大小计费</strong>
+          <span class="sim-notice-price">¥77 起</span>
         </header>
-        <p>标准正式模拟。可产出 RMSD、氢键、自由能景观等全套分析数据，满足正式实验与论文写作需要。</p>
+        <p>
+          S（≤4万原子）¥77 · M（4–9万）¥111 · L（9–15万）¥148 · XL（15–30万）¥222 ·
+          XXL（&gt;30万）面议（请加客服微信）。可产出 RMSD、氢键、自由能景观等全套分析数据。
+        </p>
       </article>
     </div>
-    <p class="sim-notice-tip">建议先跑 <strong>10 ns</strong> 排查体系问题，再升级至 <strong>100 ns</strong>，避免一次性长投后才发现准备阶段有坑。</p>
+    <p class="sim-notice-tip">建议先跑 <strong>10 ns</strong> 免费预模拟排查体系问题，再启动正式长程模拟，避免一次性投入后才发现准备阶段有坑。</p>
     <label class="sim-notice-dismiss-label" for="sim-notice-dismiss">
       <input type="checkbox" id="sim-notice-dismiss">
       <span>不再自动弹出此须知</span>
@@ -1040,8 +1043,8 @@
 <script src="/js/main_tabs.js?v=20260714"></script>
 <script src="/js/ngl.js"></script>
 <script src="/js/pdbqt_poses.js?v=20260717a"></script>
-<script src="/js/viewer.js?v=20260717a"></script>
-<script src="/js/payment.js?v=20260721e"></script>
+<script src="/js/viewer.js?v=20260721f"></script>
+<script src="/js/payment.js?v=20260721f"></script>
 <script src="/js/ligand_upload.js?v=20260714"></script>
 <script src="/js/app.js?v=20260721d"></script>
 <script src="/js/interaction_analysis.js"></script>

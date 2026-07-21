@@ -1,15 +1,32 @@
 收款码文件说明（固定金额收款码，扫码后自动显示对应金额）
 
-10 ns 模拟（¥10）：
-  支付宝 pay_10.jpg
-  微信   wechat_pay_10.png
+【当前计费方式：按体系大小（原子数）分档，与模拟时长无关】
 
-100 ns 模拟（¥150）：
-  支付宝 pay_150.jpg
-  微信   wechat_pay_150.png
+S 档（≤4 万原子，¥77）：
+  支付宝 pay_77.jpg
+  微信   wechat_pay_77.png
 
-200 ns 模拟（¥240）：
-  支付宝 pay.jpg
-  微信   wechat_pay.png
+M 档（4–9 万原子，¥111）：
+  支付宝 pay_111.jpg
+  微信   wechat_pay_111.png
 
-网站会根据任务模拟时长自动展示对应收款码。
+L 档（9–15 万原子，¥148）：
+  支付宝 pay_148.jpg
+  微信   wechat_pay_148.png
+
+XL 档（15–30 万原子，¥222）：
+  支付宝 pay_222.jpg
+  微信   wechat_pay_222.png
+
+XXL 档（>30 万原子）：面议
+  展示客服微信码 wechat_support.png，引导用户添加客服确认价格。
+
+网站会在前处理完成、确定原子数后，自动展示对应体系档位的收款码与金额。
+档位边界、价格可通过环境变量覆盖：
+  WEBMD_PRICE_S / WEBMD_PRICE_M / WEBMD_PRICE_L / WEBMD_PRICE_XL
+  WEBMD_SIZE_PRICING=0 可关闭按大小定价，回退到旧的按时长定价。
+
+——以下为旧版按时长定价的收款码（保留备用，WEBMD_SIZE_PRICING=0 时使用）——
+10 ns（¥10）：  pay_10.jpg / wechat_pay_10.png
+100 ns（¥150）：pay_150.jpg / wechat_pay_150.png
+200 ns（¥240）：pay.jpg / wechat_pay.png

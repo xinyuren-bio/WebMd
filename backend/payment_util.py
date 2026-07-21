@@ -108,6 +108,117 @@ def qr_urls_for_sim_ns(sim_ns: float) -> tuple[str, str]:
     return ali, wx
 
 
+# ==================================================
+# 方案A：按体系大小（原子数）分档定价
+# 说明：价格只由体系大小决定，与模拟时长无关；10 ns 免费额度仍优先。
+#       原子数未知或关闭开关时，回退到上面的纯时长定价，保持向后兼容。
+# ==================================================
+
+# 是否启用按体系大小定价（默认开启；设为 0 回退纯时长定价）
+SIZE_PRICING_ENABLED = os.environ.get("WEBMD_SIZE_PRICING", "1").strip().lower() in ("1", "true", "yes")
+
+# >最大档（30 万原子）时展示的客服微信码，引导面议
+SUPPORT_QR = os.environ.get("WEBMD_SUPPORT_QR", "/assets/images/wechat_support.png")
+
+# 体系分档：(原子数上限, 档位名, 价格, 支付宝码, 微信码)
+# 从小到大匹配第一个「原子数 <= 上限」的档位；超过最大上限则为 XXL 面议
+SIZE_TIERS: list[tuple[int, str, float, str, str]] = [
+    (40000,  "S",  float(os.environ.get("WEBMD_PRICE_S",  "77")),  "/assets/images/pay_77.jpg",  "/assets/images/wechat_pay_77.png"),
+    (90000,  "M",  float(os.environ.get("WEBMD_PRICE_M",  "111")), "/assets/images/pay_111.jpg", "/assets/images/wechat_pay_111.png"),
+    (150000, "L",  float(os.environ.get("WEBMD_PRICE_L",  "148")), "/assets/images/pay_148.jpg", "/assets/images/wechat_pay_148.png"),
+    (300000, "XL", float(os.environ.get("WEBMD_PRICE_XL", "222")), "/assets/images/pay_222.jpg", "/assets/images/wechat_pay_222.png"),
+]
+
+
+def size_tier_for(atom_count: int) -> dict:
+    """按原子数返回体系分档信息。
+
+    设计思路：从小到大匹配第一个「原子数 <= 上限」的档位；超过最大上限
+    （>30 万原子）返回面议档（price=None），前端引导添加客服微信。
+    原子数未知（<=0）时返回空 dict，调用方据此回退纯时长定价。
+    """
+    n = int(atom_count or 0)
+    if n <= 0:
+        return {}
+    for upper, name, price, ali, wx in SIZE_TIERS:
+        if n <= upper:
+            return {
+                "tier": name,
+                "price": price,
+                "qr_url": ali,
+                "wechat_qr_url": wx,
+                "negotiable": False,
+            }
+    # 超过最大档：面议
+    return {
+        "tier": "XXL",
+        "price": None,
+        "qr_url": SUPPORT_QR,
+        "wechat_qr_url": SUPPORT_QR,
+        "negotiable": True,
+    }
+
+
+def price_for(
+    sim_ns: float,
+    atom_count: int = 0,
+    user_id: str = "",
+    all_tasks: dict | None = None,
+) -> float | None:
+    """按方案A返回应付金额。
+
+    返回值：float 金额；0.0 表示免费；None 表示面议（>30 万原子）。
+    优先级：10 ns 免费额度 > 体系大小定价 > 纯时长定价（回退）。
+    """
+    ns = float(sim_ns)
+    # 10 ns 免费额度优先（无论体系大小）
+    if abs(ns - 10.0) < 1e-6 and user_id and all_tasks is not None:
+        if free_10ns_remaining(user_id, all_tasks) > 0:
+            return 0.0
+    if SIZE_PRICING_ENABLED:
+        info = size_tier_for(atom_count)
+        if info:
+            return info["price"]  # 可能为 None（面议）
+    return _tier(ns)[0]
+
+
+def qr_urls_for(sim_ns: float, atom_count: int = 0) -> tuple[str, str]:
+    """返回 (支付宝码, 微信码)；启用大小定价且原子数已知时按体系档返回。"""
+    if SIZE_PRICING_ENABLED:
+        info = size_tier_for(atom_count)
+        if info:
+            return info["qr_url"], info["wechat_qr_url"]
+    _, ali, wx = _tier(sim_ns)
+    return ali, wx
+
+
+def size_pricing_table() -> dict:
+    """返回体系分档定价表，供前端展示。"""
+    tiers = []
+    prev = 0
+    for upper, name, price, ali, wx in SIZE_TIERS:
+        tiers.append({
+            "tier": name,
+            "atom_min": prev,
+            "atom_max": upper,
+            "amount": price,
+            "qr_url": ali,
+            "wechat_qr_url": wx,
+        })
+        prev = upper
+    # 面议档
+    tiers.append({
+        "tier": "XXL",
+        "atom_min": prev,
+        "atom_max": None,
+        "amount": None,
+        "negotiable": True,
+        "qr_url": SUPPORT_QR,
+        "wechat_qr_url": SUPPORT_QR,
+    })
+    return {"enabled": SIZE_PRICING_ENABLED, "support_qr_url": SUPPORT_QR, "tiers": tiers}
+
+
 def pricing_table() -> dict[str, dict]:
     """返回前端/配置接口用的时长定价表。"""
     out: dict[str, dict] = {}
