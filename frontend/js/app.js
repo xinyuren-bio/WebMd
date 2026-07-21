@@ -845,8 +845,13 @@
       params.ligand_pose_index = String(poseIdx);
     }
 
-    // 蛋白氨基酸上限（与后端 MAX_PROTEIN_RESIDUES 一致）
+    // 蛋白氨基酸上限（与后端一致；白名单用户跳过前端拦截）
     var maxProteinAa = 800;
+    var aaExempt = {
+      "lry541818@163.com": 1,
+    };
+    var me = window.WebMdAuth && window.WebMdAuth.getUser ? window.WebMdAuth.getUser() : null;
+    var myEmail = me && me.email ? String(me.email).toLowerCase() : "";
     var nAa = 0;
     try {
       if (isComplexMode() && cachedChains && cachedChains.length) {
@@ -866,7 +871,7 @@
     } catch (eCount) {
       nAa = 0;
     }
-    if (nAa > maxProteinAa) {
+    if (nAa > maxProteinAa && !aaExempt[myEmail]) {
       showError(
         "蛋白共 " +
           nAa +

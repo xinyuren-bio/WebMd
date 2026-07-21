@@ -54,6 +54,22 @@ MAX_ACTIVE_PREP_TASKS = int(os.environ.get("WEBMD_MAX_ACTIVE_PREP_TASKS", "10"))
 # 蛋白标准氨基酸残基数上限（超限需联系管理员；避免小内存机 tleap OOM）
 MAX_PROTEIN_RESIDUES = int(os.environ.get("WEBMD_MAX_PROTEIN_RESIDUES", "800"))
 
+# 不受氨基酸上限限制的用户邮箱（逗号分隔，小写比对）
+_PROTEIN_AA_EXEMPT_RAW = os.environ.get(
+    "WEBMD_PROTEIN_AA_LIMIT_EXEMPT_EMAILS",
+    "lry541818@163.com",
+)
+PROTEIN_AA_LIMIT_EXEMPT_EMAILS = frozenset(
+    x.strip().lower()
+    for x in _PROTEIN_AA_EXEMPT_RAW.split(",")
+    if x.strip()
+)
+
+
+def is_protein_aa_limit_exempt(email: str) -> bool:
+    """判断该邮箱是否豁免蛋白氨基酸数上限。"""
+    return (email or "").strip().lower() in PROTEIN_AA_LIMIT_EXEMPT_EMAILS
+
 # 允许的背景盐种类（中和阳离子与背景盐阳离子一致）
 ALLOWED_SALT_TYPES = ("nacl", "kcl")
 

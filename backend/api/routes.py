@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from config import (
     TASKS_DIR, DEFAULT_PARAMS, MD_MAX_NS, SITE_BASE_URL, ALLOWED_SIM_NS,
     ALLOWED_SALT_TYPES, MAX_ACTIVE_PREP_TASKS, MAX_PROTEIN_RESIDUES,
+    is_protein_aa_limit_exempt,
     PAYMENT_ENABLED, PAYMENT_AMOUNT, PAYMENT_QR_URL, WECHAT_QR_URL, PAYMENT_CURRENCY,
     TIP_ENABLED, TIP_QR_URL, ANALYTICS_FILE, AUTODL_MARKET_URL, MD_CALLBACK_SECRET,
 )
@@ -437,14 +438,14 @@ async def create_task(
         if len(mol2_paths) > 3:
             raise HTTPException(status_code=400, detail="最多支持 3 个配体")
 
-    # 蛋白标准氨基酸数上限：超限直接拒绝，避免小内存机溶剂化 OOM
+    # 蛋白标准氨基酸数上限：超限直接拒绝，避免小内存机溶剂化 OOM（白名单用户豁免）
     from engine.pdb_chains import count_std_aa_residues
 
     try:
         n_aa = count_std_aa_residues(pdb_path)
     except OSError as e:
         raise HTTPException(status_code=400, detail=f"无法读取蛋白 PDB：{e}") from e
-    if n_aa > MAX_PROTEIN_RESIDUES:
+    if n_aa > MAX_PROTEIN_RESIDUES and not is_protein_aa_limit_exempt(user.get("email", "")):
         raise HTTPException(
             status_code=400,
             detail=(
