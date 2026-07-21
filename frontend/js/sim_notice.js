@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "webmd_sim_notice_dismissed";
+  var STORAGE_KEY = "webmd_sim_notice_dismissed_v2";
   var modal = document.getElementById("sim-notice-modal");
   var btnOk = document.getElementById("sim-notice-ok");
   var btnClose = document.getElementById("sim-notice-close");
