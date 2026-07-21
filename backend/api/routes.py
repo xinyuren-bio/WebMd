@@ -292,8 +292,9 @@ async def create_task(
     pep_mode = (peptide_upload_mode or "separate").strip().lower()
     if pep_mode not in ("separate", "complex", "pdbqt"):
         pep_mode = "separate"
-    if is_pep and pep_mode == "pdbqt":
-        raise HTTPException(status_code=400, detail="肽类不支持 PDBQT 对接构象模式")
+    # 环肽暂不支持 PDBQT；线形肽可用对接构象
+    if is_cyc and pep_mode == "pdbqt":
+        raise HTTPException(status_code=400, detail="环肽暂不支持 PDBQT 对接构象模式")
 
     mol2_paths: list[str] = []
     cyclic_pdb_path: Optional[str] = None
@@ -337,6 +338,37 @@ async def create_task(
         if Path(pep_out).resolve() != cyc_dest.resolve():
             cyc_dest.write_bytes(Path(pep_out).read_bytes())
         cyclic_pdb_path = str(cyc_dest)
+    elif is_lin and pep_mode == "pdbqt":
+        # 蛋白 PDB + 线形肽对接 PDBQT：抽取选定构象为肽 PDB
+        from engine.pdbqt_util import pdbqt_to_pdb
+
+        pdb_raw = Path(pdb_file.filename or "protein.pdb").name
+        if not pdb_raw.lower().endswith(".pdb"):
+            raise HTTPException(status_code=400, detail="蛋白须为 PDB 格式")
+        with open(pdb_path, "wb") as f:
+            f.write(await pdb_file.read())
+
+        if pdbqt_file is None or not pdbqt_file.filename:
+            raise HTTPException(status_code=400, detail="PDBQT 模式请上传线形肽 PDBQT 文件")
+        qt_raw = Path(pdbqt_file.filename).name
+        if not qt_raw.lower().endswith(".pdbqt"):
+            raise HTTPException(status_code=400, detail="线形肽须为 PDBQT 格式")
+        qt_dest = work_dir / "ligand_upload.pdbqt"
+        with open(qt_dest, "wb") as f:
+            f.write(await pdbqt_file.read())
+
+        try:
+            pose_idx = int(str(ligand_pose_index or "0").strip())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="构象下标须为整数") from e
+
+        pep_out = work_dir / "linear_peptide_upload.pdb"
+        try:
+            cyclic_pdb_path, pose_count = pdbqt_to_pdb(
+                qt_dest, pep_out, index=pose_idx, work_dir=work_dir,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
     elif not is_pep and pep_mode == "complex":
         # 小分子复合物：蛋白链 + HETATM 配体残基 → 自动转 MOL2
         from engine.pdb_chains import split_complex_mol2
@@ -408,7 +440,7 @@ async def create_task(
         with open(pdb_path, "wb") as f:
             f.write(await pdb_file.read())
 
-    if is_pep and pep_mode != "complex":
+    if is_pep and pep_mode == "separate":
         label = "环肽" if is_cyc else "线形肽"
         if cyclic_peptide_file is None or not cyclic_peptide_file.filename:
             raise HTTPException(status_code=400, detail=f"{label}模式请上传肽 PDB 文件")

@@ -1,8 +1,8 @@
 # ==================================================
-# 功能说明：解析 PDBQT 多 MODEL 构象并转换为 MOL2
-# 使用方法：count_poses / extract_pose / pose_to_mol2 / pdbqt_to_mol2
+# 功能说明：解析 PDBQT 多 MODEL 构象并转换为 MOL2 / PDB
+# 使用方法：count_poses / extract_pose / pose_to_mol2 / pdbqt_to_mol2 / pdbqt_to_pdb
 # 依赖环境：Python 标准库；Open Babel（obabel）用于 PDBQT/PDB→MOL2
-# 生成时间：2026-07-17 21:20
+# 生成时间：2026-07-21
 # ==================================================
 
 from __future__ import annotations
@@ -198,4 +198,36 @@ def pdbqt_to_mol2(
             raise RuntimeError(
                 "无法将选定 PDBQT 构象转为 MOL2，请确认服务器已安装 Open Babel (obabel)。"
             )
+    return str(dst), n
+
+
+def pdbqt_to_pdb(
+    pdbqt_path: str | Path,
+    out_pdb: str | Path,
+    index: int = 0,
+    work_dir: str | Path | None = None,
+) -> tuple[str, int]:
+    """从 PDBQT 抽取指定构象为干净 PDB（供线形肽等无需 MOL2 的流程）。
+
+    设计思路：复用 extract_pose，不经 Open Babel，保留对接坐标供 ff14SB 肽准备。
+    返回 (pdb路径, 构象总数)。
+    """
+    src = Path(pdbqt_path)
+    n = count_poses(src)
+    if n < 1:
+        raise ValueError("未能从 PDBQT 中解析出任何构象（需含 ATOM/HETATM）")
+    if index < 0 or index >= n:
+        raise ValueError(
+            f"构象下标无效：{index}（共 {n} 个，合法范围 0–{n - 1}）"
+        )
+
+    wd = Path(work_dir) if work_dir else src.parent
+    wd.mkdir(parents=True, exist_ok=True)
+    dst = Path(out_pdb)
+    # 中间构象备份，便于排查
+    pose_bak = wd / f"ligand_pose_{index}.pdb"
+    extract_pose(src, index, pose_bak)
+    if dst.resolve() != pose_bak.resolve():
+        dst.write_text(pose_bak.read_text(encoding="utf-8"), encoding="utf-8")
+    logger.info("PDBQT 构象 %d/%d 已导出为肽 PDB: %s", index + 1, n, dst.name)
     return str(dst), n
