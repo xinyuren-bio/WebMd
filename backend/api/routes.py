@@ -1235,11 +1235,9 @@ async def get_task_logs(task_id: str, user: dict = Depends(get_current_user)):
 
 
 @router.get("/tasks/{task_id}/structure/complex.pdb")
-async def get_complex_structure(task_id: str):
-    """返回蛋白-配体复合物 PDB（不含水与离子），供 NGL 可视化。"""
-    task = tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+async def get_complex_structure(task_id: str, user: dict = Depends(get_current_user)):
+    """返回蛋白-配体复合物 PDB（不含水与离子），供 NGL 可视化。仅任务所有者可访问。"""
+    task = _task_owner_or_404(task_id, user)
     if task.status != TaskStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="任务尚未完成，暂无可视化结构")
 
@@ -1255,11 +1253,9 @@ async def get_complex_structure(task_id: str):
 
 
 @router.get("/tasks/{task_id}/ligand/forcefield")
-async def get_ligand_forcefield(task_id: str):
-    """返回配体 GAFF2 力场 JSON（原子类型、电荷、键/角/二面角参数）。"""
-    task = tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+async def get_ligand_forcefield(task_id: str, user: dict = Depends(get_current_user)):
+    """返回配体 GAFF2 力场 JSON（原子类型、电荷、键/角/二面角参数）。仅任务所有者可访问。"""
+    task = _task_owner_or_404(task_id, user)
     if task.status != TaskStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="任务尚未完成")
 
@@ -1272,11 +1268,9 @@ async def get_ligand_forcefield(task_id: str):
 
 
 @router.get("/tasks/{task_id}/ligand/structure.mol2")
-async def get_ligand_mol2(task_id: str):
-    """返回 GAFF2 参数化后的配体 mol2，供 NGL 渲染。"""
-    task = tasks.get(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="任务不存在")
+async def get_ligand_mol2(task_id: str, user: dict = Depends(get_current_user)):
+    """返回 GAFF2 参数化后的配体 mol2，供 NGL 渲染。仅任务所有者可访问。"""
+    task = _task_owner_or_404(task_id, user)
     if task.status != TaskStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="任务尚未完成")
 

@@ -852,7 +852,12 @@
           var url = "/api/tasks/" + taskId + "/structure/complex.pdb";
           logDebug("请求 URL", url);
 
-          fetch(url)
+          // 该接口已加登录+归属校验，需携带 Bearer token（apiFetch 会自动附带）
+          var _authFetch =
+            window.WebMdAuth && window.WebMdAuth.apiFetch
+              ? window.WebMdAuth.apiFetch
+              : fetch;
+          _authFetch(url)
             .then(function (resp) {
               logDebug("HTTP 状态", resp.status + " " + resp.statusText);
               if (!resp.ok) {
