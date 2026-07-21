@@ -52,7 +52,7 @@ ALLOWED_SIM_NS = (10.0, 100.0, 200.0)
 MAX_ACTIVE_PREP_TASKS = int(os.environ.get("WEBMD_MAX_ACTIVE_PREP_TASKS", "10"))
 
 # 蛋白标准氨基酸残基数上限（超限需联系管理员；避免小内存机 tleap OOM）
-MAX_PROTEIN_RESIDUES = int(os.environ.get("WEBMD_MAX_PROTEIN_RESIDUES", "800"))
+MAX_PROTEIN_RESIDUES = int(os.environ.get("WEBMD_MAX_PROTEIN_RESIDUES", "1000"))
 
 # 不受氨基酸上限限制的用户邮箱（逗号分隔，小写比对）
 _PROTEIN_AA_EXEMPT_RAW = os.environ.get(

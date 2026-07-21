@@ -846,7 +846,7 @@
     }
 
     // 蛋白氨基酸上限（与后端一致；白名单用户跳过前端拦截）
-    var maxProteinAa = 800;
+    var maxProteinAa = 1000;
     var aaExempt = {
       "lry541818@163.com": 1,
     };
