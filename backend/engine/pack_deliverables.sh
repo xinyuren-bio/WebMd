@@ -230,6 +230,10 @@ fi
 if [ ! -f analysis_csv/README.txt ] && [ "$(find analysis_csv -name '*.csv' | wc -l)" -eq 0 ]; then
   echo "未能生成分析 CSV（请检查轨迹与 Python/GROMACS 环境）。" > analysis_csv/README.txt
 fi
+# 兜底：CSV 不得留在 plots（历史逻辑曾把 hbond csv 写进 plots）
+if [ -d analysis_plots ]; then
+  find analysis_plots -maxdepth 1 -type f -name '*.csv' -print -delete 2>/dev/null || true
+fi
 rm -f "$ANAL_ZIP"
 zip -r -q "$ANAL_ZIP" analysis_csv analysis_plots
 if [ ! -s "$ANAL_ZIP" ]; then
