@@ -886,9 +886,12 @@ def _跑氢键残基时间线(
             pass
 
     if csv_p:
+        # 氢键 CSV 属于数据表，应归入 csv 目录；此前误留在 plots，改为移动
         try:
             import shutil
-            shutil.copy(csv_p, csv_dir / Path(csv_p).name)
+            dst = csv_dir / Path(csv_p).name
+            shutil.move(str(csv_p), str(dst))
+            csv_p = str(dst)
         except OSError:
             pass
     if png:
