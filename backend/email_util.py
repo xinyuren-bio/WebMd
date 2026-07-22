@@ -317,13 +317,7 @@ def send_user_md_completed_notify(
     attach_list: list[tuple[str, str]] = []
     attach_note = ""
 
-    # 湿实验友好使用指南（体积很小，优先随信附上）
-    guide = Path(__file__).resolve().parent / "engine" / "USER_RESULT_GUIDE.md"
-    if guide.is_file() and guide.stat().st_size >= 100:
-        if guide.stat().st_size <= MAX_EMAIL_ATTACH_BYTES:
-            attach_list.append((str(guide), "WebMD_结果使用指南.md"))
-        else:
-            attach_note += "\n- 结果使用指南体积异常，请在压缩包内查看同名文件"
+    # 使用指南已打入 simulation / analysis 压缩包，邮件不再单独附一份以免重复
 
     for fp, label, fname in (
         (sim_zip, "模拟数据包", f"{task_id}_simulation.zip"),
@@ -345,15 +339,16 @@ def send_user_md_completed_notify(
     body = (
         f"您好，\n\n"
         f"任务 {task_id} 的分子动力学模拟已完成。\n\n"
-        f"【建议先看】附件「WebMD_结果使用指南.md」\n"
+        f"【建议先看】压缩包内的「WebMD_结果使用指南.md」\n"
         f"- 如何把 complex.pdb + fit.xtc 拖进 PyMOL 看轨迹\n"
         f"- 分析图分别是什么意思（湿实验友好说明）\n"
         f"- 把图片发给大模型写论文时可用的提示词模板\n"
         f"- 可直接改编进文章的 Methods 模板（请按小分子/线形肽/环肽选用对应章节）\n\n"
         f"附件说明：\n"
-        f"1. WebMD_结果使用指南.md — 使用与写作指南（务必先读）\n"
-        f"2. {task_id}_simulation.zip — 含 ndx、top、tpr；pdb/xtc 为蛋白+配体（无溶剂）\n"
-        f"3. {task_id}_analysis.zip — 含 analysis_csv/（数据表）与 analysis_plots/（图片）\n"
+        f"1. {task_id}_simulation.zip — 含 ndx、top、tpr；pdb/xtc 为蛋白+配体（无溶剂）；"
+        f"内含 WebMD_结果使用指南.md\n"
+        f"2. {task_id}_analysis.zip — 含 analysis_csv/、analysis_plots/；"
+        f"内含 WebMD_结果使用指南.md\n"
     )
     if attach_note:
         body += f"\n以下文件未随信附上（邮箱大小限制）：{attach_note}\n"
