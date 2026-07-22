@@ -38,7 +38,12 @@ def _parse_args():
     p.add_argument("--trajectory", required=True, help="轨迹文件路径，如 fit.xtc")
     p.add_argument("--group1", required=True, help="第一个组；可写 LIG（自动按resname）或 protein（直接选择）")
     p.add_argument("--group2", required=True, help="第二个组；可写 UNK（自动按resname）或完整选择语句")
-    p.add_argument("--output-dir", required=True, help="输出目录")
+    p.add_argument("--output-dir", required=True, help="PNG 输出目录（也可作 CSV 默认目录）")
+    p.add_argument(
+        "--csv-dir",
+        default="",
+        help="CSV 输出目录；不填则与 --output-dir 相同。推荐与图片目录分开",
+    )
     p.add_argument("--prefix", default="hbond_residue_timeline", help="输出文件前缀")
     p.add_argument("--end-ns", type=float, default=None, help="仅分析到该时间(ns)，不填则分析全轨迹")
     p.add_argument("--d-a-cutoff", type=float, default=3.0, help="供体-受体距离阈值(Å)")
@@ -190,6 +195,8 @@ def _atom_chain_tag(atom) -> str:
 def main():
     args = _parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
+    csv_dir = (args.csv_dir or "").strip() or args.output_dir
+    os.makedirs(csv_dir, exist_ok=True)
 
     print("加载轨迹中...")
     u = mda.Universe(args.topology, args.trajectory)
@@ -299,7 +306,7 @@ def main():
 
     slug1 = _slug(args.group1)
     slug2 = _slug(args.group2)
-    csv_path = os.path.join(args.output_dir, f"{args.prefix}_{slug1}_vs_{slug2}.csv")
+    csv_path = os.path.join(csv_dir, f"{args.prefix}_{slug1}_vs_{slug2}.csv")
     with open(csv_path, "w", encoding="utf-8") as f:
         f.write("frame,time_ps,time_ns,chain,resid,resname,value\n")
         for (chain, resid, resname), r in resid_to_row.items():
@@ -392,13 +399,17 @@ def run_hbond_residue_timeline(
     protein_side: str = "auto",
     mode: str = "binary",
     end_ns=None,
+    csv_dir: str | None = None,
 ):
-    """计算并绘制蛋白残基-配体氢键时间图，返回 (png路径, csv路径)。"""
+    """计算并绘制蛋白残基-配体氢键时间图，返回 (png路径, csv路径)。
+
+    png 写入 output_dir；csv 写入 csv_dir（默认与 output_dir 相同）。
+    """
     import sys as _sys
     from pathlib import Path as _P
-    from typing import Optional, Tuple
 
     old_argv = _sys.argv
+    csv_out = (csv_dir or output_dir)
     try:
         _sys.argv = [
             "hbond_residue_timeline.py",
@@ -407,6 +418,7 @@ def run_hbond_residue_timeline(
             "--group1", group1,
             "--group2", group2,
             "--output-dir", output_dir,
+            "--csv-dir", csv_out,
             "--prefix", prefix,
             "--d-a-cutoff", str(d_a_cutoff),
             "--angle-cutoff", str(angle_cutoff),
@@ -419,9 +431,8 @@ def run_hbond_residue_timeline(
         main()
     finally:
         _sys.argv = old_argv
-    out = _P(output_dir)
-    pngs = sorted(out.glob(f"{prefix}_*.png"))
-    csvs = sorted(out.glob(f"{prefix}_*.csv"))
+    pngs = sorted(_P(output_dir).glob(f"{prefix}_*.png"))
+    csvs = sorted(_P(csv_out).glob(f"{prefix}_*.csv"))
     return (str(pngs[-1]) if pngs else None, str(csvs[-1]) if csvs else None)
 
 

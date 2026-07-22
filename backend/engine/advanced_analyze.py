@@ -867,8 +867,7 @@ def _跑氢键残基时间线(
             log("[HBond-map] 缺少拓扑或轨迹，跳过")
             return False
 
-    out_dir = plot_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
     csv_dir.mkdir(parents=True, exist_ok=True)
     try:
         png, csv_p = run_hbond_residue_timeline(
@@ -876,7 +875,8 @@ def _跑氢键残基时间线(
             trajectory=traj,
             group1=g1,
             group2=g2,
-            output_dir=str(out_dir),
+            output_dir=str(plot_dir),
+            csv_dir=str(csv_dir),
             prefix="hbond_residue_timeline",
             protein_side=protein_side,
             d_a_cutoff=3.0,
@@ -892,15 +892,13 @@ def _跑氢键残基时间线(
         except OSError:
             pass
 
-    if csv_p:
-        # 氢键 CSV 属于数据表，应归入 csv 目录；此前误留在 plots，改为移动
+    # 兜底：清除 plots 里误留的 hbond csv（旧逻辑 copy/同目录写入）
+    for stray in plot_dir.glob("hbond_residue_timeline_*.csv"):
         try:
-            import shutil
-            dst = csv_dir / Path(csv_p).name
-            shutil.move(str(csv_p), str(dst))
-            csv_p = str(dst)
+            stray.unlink()
         except OSError:
             pass
+
     if png:
         log(f"[HBond-map] 已生成: {Path(png).name}（protein vs {tag2}）")
         return True
