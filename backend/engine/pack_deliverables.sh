@@ -3,7 +3,7 @@
 # 功能说明：打包模拟数据包与分析结果包；交付 pdb/xtc 仅含蛋白+配体
 # 使用方法：在任务目录执行 bash pack_deliverables.sh
 # 依赖环境：zip；可选 GROMACS（用于从全体系轨迹抽取 Complex）
-# 生成时间：2026-07-16
+# 生成时间：2026-07-22
 # ==================================================
 
 set -uo pipefail
@@ -213,17 +213,30 @@ elif [ -f WebMD_结果使用指南.md ]; then
   cp -f WebMD_结果使用指南.md "$STAGE/WebMD_结果使用指南.md"
 fi
 
+# UTF-8 文件名打包（避免 macOS/Windows 解压中文乱码）
+_ZIP_UTF8="$(cd "$(dirname "$0")" && pwd)/zip_utf8.py"
+_zip_utf8() {
+  local out="$1"
+  shift
+  if [ -f "$_ZIP_UTF8" ]; then
+    python3 "$_ZIP_UTF8" "$out" "$@"
+  else
+    # 兜底：旧环境无脚本时仍用系统 zip（可能乱码）
+    zip -j -q "$out" "$@"
+  fi
+}
+
 rm -f "$SIM_ZIP"
 (
   cd "$STAGE"
-  ZIP_LIST=(to.ndx system.top md.tpr complex.pdb "$README")
+  ZIP_ARGS=(to.ndx system.top md.tpr complex.pdb "$README")
   if [ -f "WebMD_结果使用指南.md" ]; then
-    ZIP_LIST+=("WebMD_结果使用指南.md")
+    ZIP_ARGS+=("WebMD_结果使用指南.md")
   fi
   if [ "$HAVE_XTC" -eq 1 ] && [ -s fit.xtc ]; then
-    ZIP_LIST+=(fit.xtc)
+    ZIP_ARGS+=(fit.xtc)
   fi
-  zip -j -q "../$SIM_ZIP" "${ZIP_LIST[@]}"
+  _zip_utf8 "../$SIM_ZIP" "${ZIP_ARGS[@]}"
 )
 rm -rf "$STAGE"
 
@@ -252,7 +265,13 @@ if [ -f USER_RESULT_GUIDE.md ]; then
   cp -f USER_RESULT_GUIDE.md "WebMD_结果使用指南.md"
 fi
 rm -f "$ANAL_ZIP"
-if [ -f "WebMD_结果使用指南.md" ]; then
+if [ -f "$_ZIP_UTF8" ]; then
+  if [ -f "WebMD_结果使用指南.md" ]; then
+    python3 "$_ZIP_UTF8" "$ANAL_ZIP" analysis_csv analysis_plots "WebMD_结果使用指南.md"
+  else
+    python3 "$_ZIP_UTF8" "$ANAL_ZIP" analysis_csv analysis_plots
+  fi
+elif [ -f "WebMD_结果使用指南.md" ]; then
   zip -r -q "$ANAL_ZIP" analysis_csv analysis_plots "WebMD_结果使用指南.md"
 else
   zip -r -q "$ANAL_ZIP" analysis_csv analysis_plots
