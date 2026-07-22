@@ -22,6 +22,7 @@ from .ion_box import (
     read_amber_inpcrd_box,
 )
 from .pdb_sanitize import sanitize_protein_lines
+from .processing_report import add_event
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +446,20 @@ def finalize_salt_report_from_gmx(work_dir: str | Path) -> None:
     )
     log_salt_report(report)
     (work / "SALT_REPORT.txt").write_text(format_salt_report(report), encoding="utf-8")
+    add_event(
+        "盐离子",
+        "溶剂化与离子化",
+        (
+            f"{report.salt_type.upper()} 目标额外盐 {report.target_conc_M:.4g} M；"
+            f"N_pair={int(report.n_pair)}；"
+            f"中和阳离子={report.n_neutralize_cation}、阴离子={report.n_neutralize_anion}；"
+            f"实际额外盐对浓度={report.actual_pair_conc_M:.4g} M"
+        ),
+        n_pair=int(report.n_pair),
+        n_neutralize_cation=report.n_neutralize_cation,
+        n_neutralize_anion=report.n_neutralize_anion,
+        salt_type=report.salt_type,
+    )
 
 
 def _make_tleap_script(

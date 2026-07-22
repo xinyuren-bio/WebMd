@@ -2,7 +2,7 @@
 # 功能说明：邮件发送（管理员通知、注册验证码、前处理/MD 完成通知）
 # 使用方法：由 api 模块调用
 # 依赖环境：Python 标准库 smtplib；需配置 SMTP_* 环境变量
-# 生成时间：2026-07-20
+# 生成时间：2026-07-22
 # ==================================================
 
 import logging
@@ -49,6 +49,29 @@ def _send_mail(to: str, subject: str, body: str) -> bool:
         return False
 
 
+def _attach_file(msg: MIMEMultipart, fp: Path, name: str) -> bool:
+    """按扩展名附加文件；成功返回 True。"""
+    if not fp.is_file() or fp.stat().st_size <= 0:
+        return False
+    suffix = fp.suffix.lower()
+    data = fp.read_bytes()
+    if suffix in (".txt", ".md", ".log", ".json"):
+        part = MIMEText(data.decode("utf-8", errors="replace"), "plain", "utf-8")
+        part.add_header("Content-Disposition", "attachment", filename=name)
+    elif suffix == ".zip":
+        part = MIMEBase("application", "zip")
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=name)
+    else:
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(data)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=name)
+    msg.attach(part)
+    return True
+
+
 def _send_mail_with_attachments(
     to: str,
     subject: str,
@@ -65,23 +88,23 @@ def _send_mail_with_attachments(
     msg["To"] = to
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
+    n_att = 0
     for fp, name in attachments:
         p = Path(fp)
-        if not p.is_file() or p.stat().st_size < 100:
+        # zip 交付物过小视为无效；文本报告放宽
+        min_size = 20 if Path(name).suffix.lower() in (".txt", ".md", ".json", ".log") else 100
+        if not p.is_file() or p.stat().st_size < min_size:
             logger.warning("跳过无效附件: %s", fp)
             continue
-        part = MIMEBase("application", "zip")
-        part.set_payload(p.read_bytes())
-        encoders.encode_base64(part)
-        part.add_header("Content-Disposition", "attachment", filename=name)
-        msg.attach(part)
+        if _attach_file(msg, p, name):
+            n_att += 1
 
-    if len(msg.get_payload()) <= 1:
+    if n_att <= 0:
         logger.warning("无有效附件，改为纯文本邮件")
         return _send_mail(to, subject, body + "\n\n（附件未能附加，请登录网站下载）")
 
     total = sum(Path(fp).stat().st_size for fp, _ in attachments if Path(fp).is_file())
-    logger.info("发送带附件邮件至 %s，共 %d 个附件，合计 %d KB", to, len(msg.get_payload()) - 1, total // 1024)
+    logger.info("发送带附件邮件至 %s，共 %d 个附件，合计 %d KB", to, n_att, total // 1024)
 
     try:
         if SMTP_PORT == 465:
@@ -111,6 +134,52 @@ def send_verification_code(email: str, code: str) -> bool:
     if ok:
         logger.info("已发送注册验证码至 %s", email)
     return ok
+
+
+def send_admin_prep_done_notify(
+    task_id: str,
+    user_email: str,
+    site_base: str,
+    *,
+    ok: bool,
+    error_message: str = "",
+    report_summary: str = "",
+    report_txt_path: str = "",
+    atom_count: int = 0,
+) -> bool:
+    """前处理结束时向管理员发送体系处理报告（用户邮件不变）。"""
+    if not ADMIN_NOTIFY_EMAIL:
+        logger.warning("未配置 WEBMD_ADMIN_NOTIFY_EMAIL，跳过前处理报告邮件")
+        return False
+
+    result = "成功" if ok else "失败"
+    subject = f"[WebMD] 前处理{result} · 处理报告 · {task_id}"
+    body = (
+        f"任务 ID：{task_id}\n"
+        f"用户邮箱：{user_email or '—'}\n"
+        f"前处理结果：{result}\n"
+        f"体系原子数：{atom_count or '—'}\n"
+    )
+    if not ok and error_message:
+        body += f"错误信息：{error_message[:800]}\n"
+    body += (
+        f"\n--- 体系处理摘要 ---\n"
+        f"{report_summary or '（无自动修复/改动记录）'}\n\n"
+        f"管理后台：{site_base}/admin.html\n"
+        f"任务状态：{site_base}/status.html?id={task_id}\n"
+    )
+
+    attachments: list[tuple[str, str]] = []
+    if report_txt_path and Path(report_txt_path).is_file():
+        attachments.append((report_txt_path, f"{task_id}_PROCESSING_REPORT.txt"))
+
+    if attachments:
+        sent = _send_mail_with_attachments(ADMIN_NOTIFY_EMAIL, subject, body, attachments)
+    else:
+        sent = _send_mail(ADMIN_NOTIFY_EMAIL, subject, body)
+    if sent:
+        logger.info("已发送前处理报告邮件：任务 %s（%s）", task_id, result)
+    return sent
 
 
 def send_admin_payment_notify(

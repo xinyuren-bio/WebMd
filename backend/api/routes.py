@@ -51,6 +51,7 @@ from email_util import (
     send_admin_payment_notify,
     send_admin_need_autodl_notify,
     send_admin_md_completed_notify,
+    send_admin_prep_done_notify,
     send_user_md_completed_notify,
     send_user_prep_done_notify,
 )
@@ -158,6 +159,22 @@ def _execute_task(
             logger.exception("任务 %s 失败", task_id)
         finally:
             engine_logger.removeHandler(log_handler)
+            # 落盘/刷新处理报告（成功路径 pipeline 已写；失败路径在此补写）
+            try:
+                from engine.processing_report import finalize_report, clear_report
+                st = "completed" if task.status == TaskStatus.COMPLETED else (
+                    "failed" if task.status == TaskStatus.FAILED else str(task.status.value)
+                )
+                if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                    finalize_report(
+                        task.work_dir,
+                        task.params,
+                        status=st,
+                        error_message=task.error_message or "",
+                    )
+                clear_report()
+            except Exception:
+                logger.exception("任务 %s 处理报告落盘异常", task_id)
             task.save()
             # 前处理终态发邮件，避免用户因串行排队一直盯页面
             if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
@@ -173,6 +190,26 @@ def _execute_task(
                     )
                 except Exception:
                     logger.exception("任务 %s 前处理结果邮件发送异常", task_id)
+                # 管理员：体系处理报告（用户邮件保持不变）
+                try:
+                    pr = task.params.get("processing_report") or {}
+                    report_txt = pr.get("report_txt") or str(
+                        Path(task.work_dir) / "PROCESSING_REPORT.txt"
+                    )
+                    send_admin_prep_done_notify(
+                        task_id,
+                        em,
+                        SITE_BASE_URL,
+                        ok=(task.status == TaskStatus.COMPLETED),
+                        error_message=task.error_message or "",
+                        report_summary=pr.get("email_summary") or "\n".join(
+                            pr.get("summary_lines") or []
+                        ),
+                        report_txt_path=report_txt,
+                        atom_count=int(task.atom_count or 0),
+                    )
+                except Exception:
+                    logger.exception("任务 %s 管理员处理报告邮件发送异常", task_id)
 
 
 def _task_owner_or_404(task_id: str, user: dict) -> Task:

@@ -25,6 +25,7 @@ from .ligand_charge import (
     pick_initial_charge,
     probe_working_charges,
 )
+from .processing_report import add_event
 
 # 常见不支持作为小分子 GAFF2 参数化的金属元素
 _UNSUPPORTED_METALS = frozenset({
@@ -515,6 +516,15 @@ def _add_hydrogens_via_obabel(src: Path, dst: Path, env: dict) -> bool:
                 label, src.name, dst.name,
                 n_before, _count_mol2_hydrogens(dst),
             )
+            add_event(
+                "配体补氢",
+                f"Open Babel 补氢成功 [{label}]",
+                f"{src.name} H {n_before} → {_count_mol2_hydrogens(dst)}",
+                level="note",
+                strategy=label,
+                h_before=n_before,
+                h_after=_count_mol2_hydrogens(dst),
+            )
             return True
         logger.warning(
             "Open Babel 补氢未达标 [%s]: H %d → %d，继续尝试其他策略",
@@ -559,6 +569,14 @@ def _add_hydrogens_via_rdkit(src: Path, dst: Path, env: dict) -> bool:
             logger.info(
                 "RDKit+OpenBabel 补氢成功: %s（H %d → %d）",
                 dst.name, _count_mol2_hydrogens(src), _count_mol2_hydrogens(dst),
+            )
+            add_event(
+                "配体补氢",
+                "RDKit+OpenBabel 补氢成功",
+                f"{src.name} H {_count_mol2_hydrogens(src)} → {_count_mol2_hydrogens(dst)}",
+                level="note",
+                h_before=_count_mol2_hydrogens(src),
+                h_after=_count_mol2_hydrogens(dst),
             )
             return True
         logger.warning(
@@ -797,18 +815,47 @@ def parameterize_ligand(
         )
     if san.fixes:
         logger.info("已应用 %d 条高置信原子类型修复", len(san.fixes))
+        detail = "; ".join(
+            f"{f.atom_name}:{f.old_type}→{f.new_type}" for f in san.fixes[:8]
+        )
+        if len(san.fixes) > 8:
+            detail += "…"
+        add_event(
+            "配体原子类型",
+            f"{mol2_name} 高置信原子类型修复",
+            f"{len(san.fixes)} 条：{detail}",
+            level="note",
+            n_fixes=len(san.fixes),
+            ligand=mol2_name,
+        )
 
     protonated = lig_dir / "ligand_protonated.mol2"
     if add_hydrogens:
         if _has_explicit_hydrogens(mol2_dest):
             shutil.copy(mol2_dest, str(protonated))
             logger.info("已有显式氢，跳过补氢: %s", mol2_dest.name)
+            add_event(
+                "配体补氢",
+                f"{mol2_name} 跳过补氢",
+                f"已有显式氢（H={_count_mol2_hydrogens(mol2_dest)}）",
+                ligand=mol2_name,
+            )
         else:
             h_tmp = lig_dir / f"{mol2_name}_h.mol2"
+            h_before = _count_mol2_hydrogens(mol2_dest)
             if _add_hydrogens_mol2(mol2_dest, h_tmp):
                 sanitize_mol2_atom_types(h_tmp)
                 shutil.copy(h_tmp, str(protonated))
                 mol2_dest = h_tmp
+                # 成功细节已在 _add_hydrogens_* 内写入；此处补配体名便于对照
+                add_event(
+                    "配体补氢",
+                    f"{mol2_name} 补氢完成",
+                    f"H {h_before} → {_count_mol2_hydrogens(mol2_dest)}",
+                    ligand=mol2_name,
+                    h_before=h_before,
+                    h_after=_count_mol2_hydrogens(mol2_dest),
+                )
             else:
                 # 开启补氢却未达标时直接失败，避免半氢结构进入 antechamber
                 raise RuntimeError(
@@ -817,6 +864,7 @@ def parameterize_ligand(
                 )
     else:
         shutil.copy(mol2_dest, str(protonated))
+        add_event("配体补氢", f"{mol2_name} 未补氢", "用户关闭 ligand_add_hydrogens", ligand=mol2_name)
 
     detection = detect_ligand_charge(Path(mol2_dest))
     ac_mol2 = lig_dir / f"{mol2_name}_gaff.mol2"
@@ -849,11 +897,28 @@ def parameterize_ligand(
         charge_source = "auto_probe"
         ok = ac_mol2.is_file() and ac_mol2.stat().st_size > 0
         logger.warning("无法自动判断净电荷，已自动采用 nc=%d", net_charge)
+        add_event(
+            "配体电荷",
+            f"{mol2_name} 自动探测净电荷",
+            f"无法检测，采用 nc={net_charge}",
+            level="warn",
+            ligand=mol2_name,
+            net_charge=net_charge,
+            charge_source=charge_source,
+        )
     else:
         ok = _run_antechamber(mol2_dest, ac_mol2, int(net_charge), lig_dir, env)
         if not ok and confirmed_charge is None:
             # 高置信检测电荷失败时禁止静默改写（避免奇偶电子凑数成错误 nc）
             if getattr(detection, "confidence", "") == "high":
+                add_event(
+                    "配体电荷",
+                    f"{mol2_name} 高置信电荷失败",
+                    f"nc={net_charge}（{detection.source}）AM1-BCC 未通过，未自动改写",
+                    level="warn",
+                    ligand=mol2_name,
+                    net_charge=net_charge,
+                )
                 raise RuntimeError(
                     f"配体参数化失败：高置信净电荷为 {net_charge}，但 AM1-BCC 未通过。"
                     "请检查结构/质子化后重试，或手动指定确认电荷；"
@@ -874,6 +939,16 @@ def parameterize_ligand(
             charge_source = "auto_probe"
             ok = ac_mol2.is_file() and ac_mol2.stat().st_size > 0
             logger.warning("原净电荷 nc=%d 失败，已自动改用 nc=%d", old_nc, net_charge)
+            add_event(
+                "配体电荷",
+                f"{mol2_name} 自动改用净电荷",
+                f"原 nc={old_nc} 失败 → nc={net_charge}",
+                level="warn",
+                ligand=mol2_name,
+                net_charge=net_charge,
+                old_nc=old_nc,
+                charge_source=charge_source,
+            )
 
     if not ok:
         raise RuntimeError(
@@ -919,6 +994,20 @@ def parameterize_ligand(
     logger.info(
         "配体 GAFF2 完成: %s (nc=%d, 来源=%s, 方法=AM1-BCC)",
         mol2_name, net_charge, charge_source,
+    )
+    add_event(
+        "配体电荷",
+        f"{mol2_name} 采用净电荷",
+        f"nc={int(net_charge)}，来源={charge_source}"
+        + (
+            f"；检测={detection.detected_charge}({detection.confidence})"
+            if detection.detected_charge is not None
+            else ""
+        ),
+        level="note" if charge_source == "auto_probe" else "info",
+        ligand=mol2_name,
+        net_charge=int(net_charge),
+        charge_source=charge_source,
     )
     return str(ac_mol2), str(frcmod), summary
 

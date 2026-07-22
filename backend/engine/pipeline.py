@@ -2,7 +2,7 @@
 # 功能说明：MD 前处理流水线（小分子 GAFF2 / 环肽 / 线形肽）
 # 使用方法：由 API 后台任务调用 run_pipeline(...)
 # 依赖环境：见 protein / ligand / cyclic_peptide / system_builder
-# 生成时间：2026-07-16
+# 生成时间：2026-07-22
 # ==================================================
 
 import logging
@@ -13,6 +13,7 @@ from . import protein, ligand, system_builder, simulation, structure_export, lig
 from . import cyclic_peptide
 from .env_check import check_external_tools
 from .peptide_seq_rebuild import NeedPeptideSequence
+from .processing_report import begin_report, finalize_report, add_event
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,32 @@ def run_pipeline(
     线形肽：PDBFixer → 线形肽 ff14SB（保留末端）→ tleap → acpype → mdp。
     返回 tar.gz 路径。
     """
+    work = Path(work_dir)
+    begin_report(task_id=work.name, work_dir=work)
+    add_event(
+        "任务概况",
+        "开始前处理",
+        f"ligand_type={params.get('ligand_type') or ('cyclic' if params.get('is_cyclic_peptide') else 'linear' if params.get('is_linear_peptide') else 'mol2')}",
+    )
+
+    try:
+        return _run_pipeline_body(
+            work_dir, pdb_path, mol2_paths, params, status_callback, cyclic_pdb_path,
+        )
+    except Exception:
+        # 失败时由 routes finally 再 finalize；此处保留上下文事件
+        raise
+
+
+def _run_pipeline_body(
+    work_dir: str,
+    pdb_path: str,
+    mol2_paths: list[str] | None,
+    params: dict,
+    status_callback,
+    cyclic_pdb_path: str | None = None,
+) -> str:
+    """流水线主体（由 run_pipeline 包一层报告上下文）。"""
     ligand_type = str(params.get("ligand_type") or "").strip().lower()
     if not ligand_type:
         if params.get("is_cyclic_peptide"):
@@ -231,6 +258,9 @@ def run_pipeline(
         logger.warning("固化标准 index 组失败（已忽略）: %s", e)
     params["gmx_prep"] = prep_info
     logger.info("[5/5] GROMACS 输入文件已生成并完成 grompp 验收")
+
+    # 落盘处理报告（成功路径）；失败路径由 routes finally 补写
+    finalize_report(work, params, status="completed")
 
     status_callback("packaging")
     output_tar = work / "md_simulation_package.tar.gz"

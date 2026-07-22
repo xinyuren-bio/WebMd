@@ -15,6 +15,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from .processing_report import add_event
+
 logger = logging.getLogger(__name__)
 
 # CA–CA 超过该距离视为链断裂（Å），插入 TER
@@ -254,6 +256,14 @@ def resolve_altloc_lines(lines: list[str]) -> list[str]:
             n_kept,
             n_dropped,
         )
+        add_event(
+            "蛋白修复",
+            "altLoc 择优",
+            f"{n_multi} 个残基多构象；保留原子 {n_kept}，丢弃 {n_dropped}",
+            level="note",
+            n_multi=n_multi,
+            n_dropped=n_dropped,
+        )
     return out
 
 
@@ -313,6 +323,7 @@ def insert_ter_at_ca_breaks(lines: list[str], cutoff: float = _CA_BREAK_A) -> li
             out.append(ln if ln.endswith("\n") else ln + "\n")
     if n_ter:
         logger.info("共插入 %d 处 TER（空间断链）", n_ter)
+        add_event("蛋白修复", "插入 TER", f"{n_ter} 处（链边界或 CA–CA 断裂）", level="note", n_ter=n_ter)
     return out
 
 
@@ -895,6 +906,13 @@ def rename_std_aa_atoms_in_pdb(pdb_path: str | Path) -> dict[str, Any]:
     }
     if n_fix:
         logger.info("已重命名 %d 个残基的原子名: %s", n_fix, fp.name)
+        add_event(
+            "蛋白修复",
+            "标准氨基酸原子名重命名",
+            f"{n_fix} 个残基（{fp.name}）",
+            level="note",
+            n_fix=n_fix,
+        )
     return info
 
 

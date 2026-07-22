@@ -2,7 +2,7 @@
 # 功能说明：使用 PDBFixer 修复蛋白（补内部缺失残基/原子/氢）并修正组氨酸命名
 # 使用方法：由 pipeline 调用 prepare_protein(pdb_path, work_dir)
 # 依赖环境：pip install pdbfixer openmm
-# 生成时间：2026-07-17
+# 生成时间：2026-07-22
 # ==================================================
 
 import logging
@@ -13,6 +13,7 @@ from pdbfixer import PDBFixer
 from openmm.app import PDBFile
 
 from .pdb_sanitize import resolve_altloc_lines
+from .processing_report import add_event
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,12 @@ def _keep_internal_missing_residues(fixer: PDBFixer) -> list[str]:
                 chain_i,
                 len(names),
                 _MAX_GAP_RESIDUES,
+            )
+            add_event(
+                "蛋白修复",
+                "跳过超长内部缺失段",
+                f"链{chain_i} 缺失{len(names)}残基(上限{_MAX_GAP_RESIDUES})",
+                level="warn",
             )
             drop_keys.append(key)
             continue
@@ -106,6 +113,11 @@ def _fix_histidine_protonation(pdb_path: str) -> None:
             "组氨酸 %s %s → %s (HD1=%s, HE2=%s)",
             chain, resnum, new_name, has_hd1, has_he2,
         )
+        add_event(
+            "蛋白修复",
+            "组氨酸命名",
+            f"{chain}{resnum} → {new_name} (HD1={has_hd1}, HE2={has_he2})",
+        )
 
     out_lines = []
     for i, line in enumerate(lines):
@@ -150,6 +162,12 @@ def _fix_carboxylic_protonation(pdb_path: str) -> None:
         for i in idxs:
             rename_map[i] = new_name
         logger.info("羧基质子化命名: 链%s 残基%s %s → %s", chain, resnum, resname, new_name)
+        add_event(
+            "蛋白修复",
+            "羧基质子化命名",
+            f"链{chain} 残基{resnum} {resname} → {new_name}",
+            level="note",
+        )
 
     if not rename_map:
         return
@@ -183,17 +201,28 @@ def prepare_protein(pdb_path: str, work_dir: str) -> str:
     if gaps:
         logger.info("将补全内部缺失残基 %d 段: %s", len(gaps), "; ".join(gaps[:12]))
         fixer.addMissingResidues()
+        add_event(
+            "蛋白修复",
+            "补全内部缺失残基",
+            f"{len(gaps)} 段: {'; '.join(gaps[:8])}" + ("…" if len(gaps) > 8 else ""),
+            level="note",
+            n_gaps=len(gaps),
+        )
     else:
         logger.info("未发现需补全的内部缺失残基（或仅有末端空洞已跳过）")
+        add_event("蛋白修复", "内部缺失残基", "无需补全（或仅跳过末端空洞）")
 
     fixer.findNonstandardResidues()
     if fixer.nonstandardResidues:
-        logger.info("替换非标准残基 %d 处", len(fixer.nonstandardResidues))
+        n_ns = len(fixer.nonstandardResidues)
+        logger.info("替换非标准残基 %d 处", n_ns)
         fixer.replaceNonstandardResidues()
+        add_event("蛋白修复", "替换非标准残基", f"{n_ns} 处", level="note", n=n_ns)
 
     fixer.findMissingAtoms()
     fixer.addMissingAtoms()
     fixer.addMissingHydrogens(pH=7.0)
+    add_event("蛋白修复", "PDBFixer 补原子与氢", "addMissingAtoms + addMissingHydrogens(pH=7.0)")
 
     out = str(work / "protein_fixed.pdb")
     with open(out, "w") as f:
@@ -205,4 +234,5 @@ def prepare_protein(pdb_path: str, work_dir: str) -> str:
     n_atoms = sum(1 for _ in fixer.topology.atoms())
     n_res = sum(1 for _ in fixer.topology.residues())
     logger.info("蛋白修复完成: %d 残基, %d 原子", n_res, n_atoms)
+    add_event("蛋白修复", "蛋白修复完成", f"{n_res} 残基, {n_atoms} 原子", n_res=n_res, n_atoms=n_atoms)
     return out
