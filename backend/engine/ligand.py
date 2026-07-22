@@ -2,7 +2,7 @@
 # 功能说明：antechamber + parmchk2 生成 GAFF2；净电荷须用户确认或高置信检测
 # 使用方法：由 pipeline 调用 parameterize_ligands(...)
 # 依赖环境：AmberTools；pip install rdkit；Open Babel 可选
-# 生成时间：2026-07-16
+# 生成时间：2026-07-22
 # ==================================================
 
 from __future__ import annotations
@@ -448,26 +448,83 @@ def _has_explicit_hydrogens(p: Path) -> bool:
     return n_h >= max(2, int(0.3 * n_heavy))
 
 
-def _add_hydrogens_mol2(src: Path, dst: Path) -> bool:
-    """Open Babel -h 补氢（结构处理，非 pKa 预测）。"""
-    env = source_amber_env()
+def _protonation_accepted(src: Path, dst: Path) -> bool:
+    """判断补氢产物是否可接受：H 必须增加，且达到最低氢/重原子比例。"""
+    if not dst.is_file() or dst.stat().st_size <= 0:
+        return False
+    n_before = _count_mol2_hydrogens(src)
+    n_after = _count_mol2_hydrogens(dst)
+    # 半氢假成功：文件写出但 H 未增加，必须拒绝
+    if n_after <= n_before:
+        return False
+    return _has_explicit_hydrogens(dst)
+
+
+def _find_obabel(env: dict) -> str | None:
+    """在 Amber/conda PATH 中定位 obabel 或 babel。"""
     for cmd0 in ("obabel", "babel"):
         exe = shutil.which(cmd0, path=env.get("PATH"))
-        if not exe:
+        if exe:
+            return exe
+    return None
+
+
+def _obabel_mol2(exe: str, args: list[str], env: dict, timeout: int = 90) -> bool:
+    """运行 Open Babel 子命令；成功写出目标文件返回 True。"""
+    r = subprocess.run(
+        [exe, *args], capture_output=True, text=True, timeout=timeout, env=env,
+    )
+    return r.returncode == 0
+
+
+def _add_hydrogens_via_obabel(src: Path, dst: Path, env: dict) -> bool:
+    """用 Open Babel 补氢：优先去氢再补氢，避免半氢结构导致 -h 空跑。"""
+    exe = _find_obabel(env)
+    if not exe:
+        return False
+    n_before = _count_mol2_hydrogens(src)
+    # 设计思路：已有少量显式 H 时，直接 -h 常不增补芳氢；先 -d 清氢再 -h
+    strategies: list[tuple[str, list[list[str]]]] = []
+    if n_before > 0:
+        deh = dst.with_name(dst.stem + "_deH.mol2")
+        strategies.append((
+            "obabel -d 再 -h",
+            [
+                ["-imol2", str(src), "-omol2", "-O", str(deh), "-d"],
+                ["-imol2", str(deh), "-omol2", "-O", str(dst), "-h"],
+            ],
+        ))
+    strategies.append((
+        "obabel -h",
+        [["-imol2", str(src), "-omol2", "-O", str(dst), "-h"]],
+    ))
+
+    for label, steps in strategies:
+        ok_steps = True
+        for step in steps:
+            if not _obabel_mol2(exe, step, env):
+                ok_steps = False
+                logger.warning("Open Babel 步骤失败 (%s): %s", label, " ".join(step))
+                break
+        if not ok_steps:
             continue
-        cmd = [exe, "-imol2", str(src), "-omol2", "-O", str(dst), "-h"]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
-        if r.returncode == 0 and dst.is_file() and dst.stat().st_size > 0:
-            n_before = _count_mol2_hydrogens(src)
-            n_after = _count_mol2_hydrogens(dst)
+        if _protonation_accepted(src, dst):
             logger.info(
-                "Open Babel 补氢完成: %s → %s（H %d → %d）。"
+                "Open Babel 补氢成功 [%s]: %s → %s（H %d → %d）。"
                 "注意：-h 不是目标 pH 下的可靠 pKa/质子化预测。",
-                src.name, dst.name, n_before, n_after,
+                label, src.name, dst.name,
+                n_before, _count_mol2_hydrogens(dst),
             )
             return True
-        logger.warning("Open Babel 补氢失败: %s", (r.stderr or r.stdout or "")[-400:])
+        logger.warning(
+            "Open Babel 补氢未达标 [%s]: H %d → %d，继续尝试其他策略",
+            label, n_before, _count_mol2_hydrogens(dst) if dst.is_file() else -1,
+        )
+    return False
 
+
+def _add_hydrogens_via_rdkit(src: Path, dst: Path, env: dict) -> bool:
+    """RDKit RemoveHs+AddHs 后经 Open Babel 写回 mol2。"""
     try:
         m = Chem.MolFromMol2File(
             str(src), sanitize=True, removeHs=False, cleanupSubstructures=False,
@@ -476,29 +533,51 @@ def _add_hydrogens_mol2(src: Path, dst: Path) -> bool:
             m = Chem.MolFromMol2File(
                 str(src), sanitize=False, removeHs=False, cleanupSubstructures=False,
             )
-        if m is not None:
-            try:
-                Chem.SanitizeMol(m)
-            except Exception:
-                pass
-            m_h = Chem.AddHs(m, addCoords=True)
-            sdf = dst.with_suffix(".sdf")
-            w = Chem.SDWriter(str(sdf))
-            w.write(m_h)
-            w.close()
-            for cmd0 in ("obabel", "babel"):
-                exe = shutil.which(cmd0, path=env.get("PATH"))
-                if not exe:
-                    continue
-                r = subprocess.run(
-                    [exe, "-isdf", str(sdf), "-omol2", "-O", str(dst)],
-                    capture_output=True, text=True, timeout=60, env=env,
-                )
-                if r.returncode == 0 and dst.is_file() and dst.stat().st_size > 0:
-                    logger.info("RDKit+OpenBabel 补氢完成: %s", dst.name)
-                    return True
+        if m is None:
+            return False
+        try:
+            Chem.SanitizeMol(m)
+        except Exception:
+            pass
+        # 半氢时直接 AddHs 往往不增补；先去氢再按价态补全
+        try:
+            m = Chem.RemoveHs(m)
+        except Exception:
+            pass
+        m_h = Chem.AddHs(m, addCoords=True)
+        sdf = dst.with_suffix(".sdf")
+        w = Chem.SDWriter(str(sdf))
+        w.write(m_h)
+        w.close()
+        exe = _find_obabel(env)
+        if not exe:
+            logger.warning("RDKit 已补氢但未找到 Open Babel，无法写回 mol2")
+            return False
+        if not _obabel_mol2(exe, ["-isdf", str(sdf), "-omol2", "-O", str(dst)], env, 60):
+            return False
+        if _protonation_accepted(src, dst):
+            logger.info(
+                "RDKit+OpenBabel 补氢成功: %s（H %d → %d）",
+                dst.name, _count_mol2_hydrogens(src), _count_mol2_hydrogens(dst),
+            )
+            return True
+        logger.warning(
+            "RDKit+OpenBabel 补氢未达标: H %d → %d",
+            _count_mol2_hydrogens(src),
+            _count_mol2_hydrogens(dst) if dst.is_file() else -1,
+        )
     except Exception as e:
         logger.warning("RDKit 补氢路径失败: %s", e)
+    return False
+
+
+def _add_hydrogens_mol2(src: Path, dst: Path) -> bool:
+    """配体补氢：Open Babel（去氢再补）优先，失败则 RDKit 兜底；须通过 H 数校验。"""
+    env = source_amber_env()
+    if _add_hydrogens_via_obabel(src, dst, env):
+        return True
+    if _add_hydrogens_via_rdkit(src, dst, env):
+        return True
     return False
 
 
@@ -731,8 +810,11 @@ def parameterize_ligand(
                 shutil.copy(h_tmp, str(protonated))
                 mol2_dest = h_tmp
             else:
-                logger.warning("补氢未成功，继续使用原结构（请确认氢原子完整）")
-                shutil.copy(mol2_dest, str(protonated))
+                # 开启补氢却未达标时直接失败，避免半氢结构进入 antechamber
+                raise RuntimeError(
+                    "配体自动补氢失败（氢原子数未达标）。"
+                    "请上传已补全氢的结构，或检查键连/原子类型后重试。"
+                )
     else:
         shutil.copy(mol2_dest, str(protonated))
 
@@ -770,7 +852,14 @@ def parameterize_ligand(
     else:
         ok = _run_antechamber(mol2_dest, ac_mol2, int(net_charge), lig_dir, env)
         if not ok and confirmed_charge is None:
-            # 原电荷失败：探测并采用第一个可行值（探测成功产物已写出）
+            # 高置信检测电荷失败时禁止静默改写（避免奇偶电子凑数成错误 nc）
+            if getattr(detection, "confidence", "") == "high":
+                raise RuntimeError(
+                    f"配体参数化失败：高置信净电荷为 {net_charge}，但 AM1-BCC 未通过。"
+                    "请检查结构/质子化后重试，或手动指定确认电荷；"
+                    "系统不会自动改用其他净电荷。"
+                )
+
             def _try(q: int) -> bool:
                 return _run_antechamber(mol2_dest, ac_mol2, q, lig_dir, env)
 
