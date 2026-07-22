@@ -84,6 +84,7 @@ def _copy_analysis_scripts(work_dir: Path) -> None:
         "fel_plot.py",
         "plot_style.py",
         "install_dssp.sh",
+        "USER_RESULT_GUIDE.md",
     )
     for name in names:
         src = _ENGINE_DIR / name
