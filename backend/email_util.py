@@ -349,7 +349,7 @@ def send_user_md_completed_notify(
         f"- 如何把 complex.pdb + fit.xtc 拖进 PyMOL 看轨迹\n"
         f"- 分析图分别是什么意思（湿实验友好说明）\n"
         f"- 把图片发给大模型写论文时可用的提示词模板\n"
-        f"- 可直接改编进文章的 Methods（力场/流程）模板\n\n"
+        f"- 可直接改编进文章的 Methods 模板（请按小分子/线形肽/环肽选用对应章节）\n\n"
         f"附件说明：\n"
         f"1. WebMD_结果使用指南.md — 使用与写作指南（务必先读）\n"
         f"2. {task_id}_simulation.zip — 含 ndx、top、tpr；pdb/xtc 为蛋白+配体（无溶剂）\n"
