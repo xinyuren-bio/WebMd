@@ -289,7 +289,13 @@ def send_admin_md_completed_notify(
     if not ADMIN_NOTIFY_EMAIL:
         return False
 
+    from payment_util import get_admin_payment_key
+
     sid = server_id.strip() if server_id else "—"
+    base = site_base.rstrip("/")
+    ak = get_admin_payment_key()
+    sim_dl = f"{base}/api/admin/tasks/{task_id}/download/md-simulation?admin_key={ak}"
+    anal_dl = f"{base}/api/admin/tasks/{task_id}/download/md-analysis?admin_key={ak}"
     subject = f"[WebMD] MD 已完成 · 任务 {task_id} · 实例 {sid} · 可关"
     body = (
         f"任务 {task_id} 的 MD 模拟已在 AutoDL 上完成。\n\n"
@@ -297,10 +303,13 @@ def send_admin_md_completed_notify(
         f"用户邮箱：{user_email or '—'}\n"
         f"SSH 地址：{ssh_host}:{ssh_port}\n"
         f"请登录 AutoDL 控制台，根据上述实例 ID 关闭对应机器以节省费用。\n\n"
+        f"管理员下载（无需登录）：\n"
+        f"- 模拟包：{sim_dl}\n"
+        f"- 分析包：{anal_dl}\n\n"
         f"--- 自动分析摘要 ---\n"
         f"{analysis_summary or '（无分析输出）'}\n\n"
-        f"管理后台：{site_base}/admin.html\n"
-        f"任务状态：{site_base}/status.html?id={task_id}\n"
+        f"管理后台：{base}/admin.html\n"
+        f"任务状态：{base}/status.html?id={task_id}\n"
     )
     ok = _send_mail(ADMIN_NOTIFY_EMAIL, subject, body)
     if ok:
@@ -361,14 +370,17 @@ def send_user_md_completed_notify(
     md_failed: bool = False,
     sim_zip: str = "",
     analysis_zip: str = "",
+    download_token: str = "",
 ) -> bool:
     """MD 完成后通知用户；成功时附带压缩包与结果使用指南（体积过大则仅发下载链接）。"""
     if not user_email:
         return False
 
     base = site_base.rstrip("/")
-    sim_dl = f"{base}/api/tasks/{task_id}/download/md-simulation"
-    anal_dl = f"{base}/api/tasks/{task_id}/download/md-analysis"
+    # 邮件直链：带任务级 token，浏览器点开即可下载（无需登录态）
+    q = f"?token={download_token}" if (download_token or "").strip() else ""
+    sim_dl = f"{base}/api/tasks/{task_id}/download/md-simulation{q}"
+    anal_dl = f"{base}/api/tasks/{task_id}/download/md-analysis{q}"
 
     if md_failed:
         subject = f"[WebMD] 您的 MD 模拟未成功完成 · 任务 {task_id}"
@@ -399,11 +411,11 @@ def send_user_md_completed_notify(
                 attach_list.append((str(p), fname))
             else:
                 attach_note += (
-                    f"\n- {label}（{sz // (1024 * 1024)} MB）体积较大，请登录下载："
+                    f"\n- {label}（{sz // (1024 * 1024)} MB）体积较大，请直接点击下载（无需登录）："
                     f"{sim_dl if 'simulation' in fname else anal_dl}"
                 )
         elif p and p.is_file():
-            attach_note += f"\n- {label} 文件无效（为空），请登录下载"
+            attach_note += f"\n- {label} 文件无效（为空），请直接点击下载链接"
 
     body = (
         f"您好，\n\n"
@@ -421,9 +433,16 @@ def send_user_md_completed_notify(
     )
     if attach_note:
         body += f"\n以下文件未随信附上（邮箱大小限制）：{attach_note}\n"
-    if not any(name.endswith(".zip") for _, name in attach_list):
+    # 始终给出可点开的直链，避免「只有附件、换设备找不到」或「附件被拒收」
+    if (download_token or "").strip() and (sim_zip or analysis_zip):
         body += (
-            f"\n请登录网站下载：\n"
+            f"\n下载链接（可直接点击，无需登录）：\n"
+            f"- 模拟数据包：{sim_dl}\n"
+            f"- 分析结果包：{anal_dl}\n"
+        )
+    elif not any(name.endswith(".zip") for _, name in attach_list):
+        body += (
+            f"\n请使用下列链接下载：\n"
             f"- 模拟数据包：{sim_dl}\n"
             f"- 分析结果包：{anal_dl}\n"
         )

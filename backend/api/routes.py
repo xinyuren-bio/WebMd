@@ -7,6 +7,7 @@
 
 import json
 import logging
+import secrets
 import tempfile
 import threading
 import time
@@ -57,7 +58,7 @@ from email_util import (
 )
 from user_store import get_user_by_id, get_user_by_email, count_users, list_recent_users
 from config import USERS_DB
-from api.deps import get_current_user
+from api.deps import get_current_user, get_optional_user
 from models import Task, TaskStatus, tasks
 from engine.pipeline import run_pipeline
 from engine.peptide_seq_rebuild import NeedPeptideSequence, normalize_peptide_sequence
@@ -1268,11 +1269,38 @@ def _md_download_guard(task: Task) -> None:
         raise HTTPException(status_code=402, detail="请先完成支付并等待核实通过后再下载")
 
 
-@router.get("/tasks/{task_id}/download/md-simulation")
-async def download_md_simulation(task_id: str, user: dict = Depends(get_current_user)):
-    """下载 MD 模拟数据包（ndx/top/tpr/pdb/xtc）。"""
-    task = _task_owner_or_404(task_id, user)
+def _md_download_token_ok(task: Task, token: str) -> bool:
+    """校验邮件直链 token（常量时间比较）。"""
+    expected = (task.md_download_token or "").strip()
+    got = (token or "").strip()
+    if not expected or not got or len(expected) != len(got):
+        return False
+    return secrets.compare_digest(got, expected)
+
+
+def _authorize_md_download(task_id: str, token: str, user: dict | None) -> Task:
+    """允许：任务所有者登录，或邮件直链 token。"""
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
     _md_download_guard(task)
+    if _md_download_token_ok(task, token):
+        return task
+    if user and task.user_id and task.user_id == user.get("user_id"):
+        return task
+    if user and not task.user_id:
+        return task
+    raise HTTPException(status_code=401, detail="请先登录，或使用邮件中的完整下载链接")
+
+
+@router.get("/tasks/{task_id}/download/md-simulation")
+async def download_md_simulation(
+    task_id: str,
+    token: str = Query(default=""),
+    user: dict | None = Depends(get_optional_user),
+):
+    """下载 MD 模拟数据包（ndx/top/tpr/pdb/xtc）；支持登录或邮件 token。"""
+    task = _authorize_md_download(task_id, token, user)
     if not task.md_sim_zip or not Path(task.md_sim_zip).is_file():
         raise HTTPException(status_code=404, detail="模拟数据包尚未生成")
     return FileResponse(
@@ -1283,10 +1311,13 @@ async def download_md_simulation(task_id: str, user: dict = Depends(get_current_
 
 
 @router.get("/tasks/{task_id}/download/md-analysis")
-async def download_md_analysis(task_id: str, user: dict = Depends(get_current_user)):
-    """下载 MD 分析结果包（CSV + 图片）。"""
-    task = _task_owner_or_404(task_id, user)
-    _md_download_guard(task)
+async def download_md_analysis(
+    task_id: str,
+    token: str = Query(default=""),
+    user: dict | None = Depends(get_optional_user),
+):
+    """下载 MD 分析结果包（CSV + 图片）；支持登录或邮件 token。"""
+    task = _authorize_md_download(task_id, token, user)
     if not task.md_analysis_zip or not Path(task.md_analysis_zip).is_file():
         raise HTTPException(status_code=404, detail="分析结果包尚未生成")
     return FileResponse(

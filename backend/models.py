@@ -8,6 +8,7 @@
 import enum
 import json
 import logging
+import secrets
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -91,6 +92,19 @@ class Task:
     analysis_summary: str = ""
     md_sim_zip: str = ""
     md_analysis_zip: str = ""
+    # 邮件直链下载令牌（持久化；知道链接即可下，勿写入公开 API）
+    md_download_token: str = ""
+
+    def ensure_md_download_token(self) -> str:
+        """确保存在 MD 交付包邮件直链令牌并写入磁盘。
+
+        设计思路：邮件客户端无法携带 Bearer；用任务级随机 token 做查询参数，
+        点开即可下载，无需登录。
+        """
+        if not (self.md_download_token or "").strip():
+            self.md_download_token = secrets.token_urlsafe(24)
+            self.save()
+        return self.md_download_token
 
     def to_dict(self) -> dict:
         return {
@@ -187,6 +201,7 @@ class Task:
             "analysis_summary": self.analysis_summary,
             "md_sim_zip": self.md_sim_zip,
             "md_analysis_zip": self.md_analysis_zip,
+            "md_download_token": self.md_download_token,
         }
         meta.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -224,6 +239,7 @@ class Task:
                 analysis_summary=data.get("analysis_summary", ""),
                 md_sim_zip=data.get("md_sim_zip", ""),
                 md_analysis_zip=data.get("md_analysis_zip", ""),
+                md_download_token=data.get("md_download_token", "") or "",
             )
             return task
         except (json.JSONDecodeError, KeyError, ValueError) as e:

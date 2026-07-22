@@ -430,6 +430,8 @@ def finalize_md_delivery(task_id: str) -> None:
         t.md_analysis_zip = anal_p
     if not t.analysis_summary:
         t.analysis_summary = pull_analysis_from_remote(t)
+    # 邮件直链令牌：避免「请登录」API 链接在邮箱中点不开
+    dl_token = t.ensure_md_download_token()
     t.save()
 
     u = get_user_by_id(Path(USERS_DB), t.user_id) if t.user_id else None
@@ -452,6 +454,7 @@ def finalize_md_delivery(task_id: str) -> None:
         md_failed=False,
         sim_zip=t.md_sim_zip,
         analysis_zip=t.md_analysis_zip,
+        download_token=dl_token,
     )
     parts = []
     if t.md_sim_zip:
