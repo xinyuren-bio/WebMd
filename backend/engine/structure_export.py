@@ -100,8 +100,17 @@ def _parse_gro_atoms(p: Path) -> list[dict]:
     return atoms
 
 
-def export_complex_pdb(gro_path: str, out_path: str) -> str:
-    """从 gro 导出仅含蛋白与配体的 PDB 文件，返回输出路径。"""
+def export_complex_pdb(
+    gro_path: str,
+    out_path: str,
+    work_dir: str | None = None,
+) -> str:
+    """从 gro 导出仅含蛋白与配体的 PDB 文件，返回输出路径。
+
+    work_dir 若提供，则读取 webmd_ligand_spec.json：
+    - 肽配体按残基号范围分到 B 链（便于 PyMOL color by chain）
+    - 小分子按残基名分到 B/C… 链并标 HETATM
+    """
     gro = Path(gro_path)
     out = Path(out_path)
     if not gro.exists():
@@ -111,22 +120,58 @@ def export_complex_pdb(gro_path: str, out_path: str) -> str:
     if not kept:
         raise ValueError("gro 中未找到蛋白或配体原子（可能全部被识别为溶剂/离子）")
 
+    # 读取统一配体定义（可选）
+    pep_range: tuple[int, int] | None = None
+    sm_resnames: set[str] = set()
+    wd = Path(work_dir) if work_dir else gro.parent
+    try:
+        from .ligand_spec import (
+            load_ligand_spec,
+            peptide_resid_range_from_spec,
+            small_molecule_resnames_from_spec,
+        )
+        spec = load_ligand_spec(wd)
+        pep_range = peptide_resid_range_from_spec(spec)
+        sm_resnames = small_molecule_resnames_from_spec(spec)
+    except Exception as e:
+        logger.debug("读取 ligand_spec 失败，回退残基名启发式: %s", e)
+
     lines = ["REMARK   蛋白-配体复合物（已去除水分子与离子）", "REMARK   来源: " + gro.name]
-    # 链号分配：蛋白统一 A 链；每个不同的配体残基按出现顺序分配 B、C… 链，
-    # 使蛋白与各配体在结构上彼此独立（前端 NGL 会据此分色，配体标为 HETATM）。
+    # 链号分配：蛋白 → A；肽/小分子配体 → B、C…（同一配体分子共链）
     _LIG_CHAIN_LETTERS = "BCDEFGHIJKLMNOPQRSTUVWXYZ"
+    # 小分子：按残基号映射链；肽：整段共用 B 链
     lig_chain_map: dict[int, str] = {}
+    pep_chain = "B"
+
+    def _is_ligand_atom(a: dict) -> bool:
+        """按 spec 或启发式判断是否为配体原子。"""
+        if pep_range is not None:
+            a0, b0 = pep_range
+            if a0 <= a["resnr"] <= b0:
+                return True
+        rn = a["resname"].strip().upper()
+        if sm_resnames and rn in sm_resnames:
+            return True
+        # 回退：非标准蛋白残基视为小分子配体
+        if pep_range is None and not sm_resnames and not _is_protein_res(a["resname"]):
+            return True
+        return False
 
     def _chain_for(a: dict) -> tuple[str, str]:
-        """返回 (记录类型, 链号)：蛋白→(ATOM, A)，配体→(HETATM, B/C…)。"""
-        if _is_protein_res(a["resname"]):
-            return "ATOM  ", "A"
-        rn = a["resnr"]
-        if rn not in lig_chain_map:
-            idx = len(lig_chain_map)
-            # 配体链号用尽 25 个字母后统一落到 Z（极端多配体的兜底）
-            lig_chain_map[rn] = _LIG_CHAIN_LETTERS[idx] if idx < len(_LIG_CHAIN_LETTERS) else "Z"
-        return "HETATM", lig_chain_map[rn]
+        """返回 (记录类型, 链号)。"""
+        if _is_ligand_atom(a):
+            if pep_range is not None and pep_range[0] <= a["resnr"] <= pep_range[1]:
+                # 肽配体：保留 ATOM（标准氨基酸），独立 B 链即可被 PyMOL 识别
+                return "ATOM  ", pep_chain
+            # 小分子：HETATM + 按残基号分链
+            rn = a["resnr"]
+            if rn not in lig_chain_map:
+                idx = len(lig_chain_map)
+                lig_chain_map[rn] = (
+                    _LIG_CHAIN_LETTERS[idx] if idx < len(_LIG_CHAIN_LETTERS) else "Z"
+                )
+            return "HETATM", lig_chain_map[rn]
+        return "ATOM  ", "A"
 
     serial = 0
     prev_chain: str | None = None
@@ -171,7 +216,7 @@ def ensure_complex_pdb(w: str, gro_name: str = "system.gro", pdb_name: str = "co
         return None
 
     try:
-        return export_complex_pdb(str(gro), str(pdb))
+        return export_complex_pdb(str(gro), str(pdb), work_dir=str(work))
     except (OSError, ValueError) as e:
         logger.warning("生成 complex.pdb 失败: %s", e)
         return None

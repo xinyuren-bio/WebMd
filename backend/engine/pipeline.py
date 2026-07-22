@@ -192,19 +192,25 @@ def run_pipeline(
     system_builder.finalize_salt_report_from_gmx(work_dir)
     logger.info("[4/5] GROMACS 拓扑转换完成")
 
+    # 统一配体定义（小分子=resname，肽=gro 实际残基范围），供导出/index/分析共用
+    from .ligand_spec import write_ligand_spec, ensure_standard_ndx_groups
+    lig_spec = write_ligand_spec(work, params)
+    params["ligand_spec"] = lig_spec
+
     gro = work / "system.gro"
     if gro.exists():
-        structure_export.export_complex_pdb(str(gro), str(work / "complex.pdb"))
+        # 传入 work_dir 以便按 spec 把肽配体分到独立链（PyMOL color by chain）
+        structure_export.export_complex_pdb(
+            str(gro), str(work / "complex.pdb"), work_dir=str(work),
+        )
 
-    # 配体残基名（用于 index / 约束归类）
+    # 配体残基名（仅小分子用于 index/约束归类；肽无独立 resname，靠 ligand_spec 残基范围）
     ligand_resnames: list[str] = []
-    for x in (params.get("ligands") or []):
-        rn = str(x.get("resname") or "").strip()
-        if rn:
-            ligand_resnames.append(rn)
-    # 肽视作溶质的一部分（并入 Protein_Ligand）
-    if is_cyc or is_lin:
-        ligand_resnames = ligand_resnames  # 肽原子已在合并拓扑溶质 moleculetype 中
+    if not (is_cyc or is_lin):
+        for x in (params.get("ligands") or []):
+            rn = str(x.get("resname") or "").strip()
+            if rn:
+                ligand_resnames.append(rn)
 
     # 5. 生成 GROMACS mdp / index / POSRES，并 grompp 验收
     status_callback("generating_mdp")
@@ -217,6 +223,12 @@ def run_pipeline(
     prep_info = prepare_gmx_equilibration(
         work_dir, ligand_resnames, run_grompp_check=True,
     )
+    # 固化统一组名 Receptor / Ligand / Complex（小分子与肽同名）
+    try:
+        ndx_groups = ensure_standard_ndx_groups(work)
+        prep_info["standard_ndx_groups"] = ndx_groups
+    except (OSError, ValueError, FileNotFoundError) as e:
+        logger.warning("固化标准 index 组失败（已忽略）: %s", e)
     params["gmx_prep"] = prep_info
     logger.info("[5/5] GROMACS 输入文件已生成并完成 grompp 验收")
 

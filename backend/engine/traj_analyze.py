@@ -204,18 +204,45 @@ def main() -> int:
     else:
         _记("[RMSF] 计算失败")
 
-    # 氢键
+    # 氢键：优先用统一组名 Receptor / Ligand（蛋白–配体氢键）；
+    # 避免旧逻辑硬编码组号 1/13 误算成蛋白–水氢键（常达上千）。
     hb_xvg = wd / "analysis_hbond.xvg"
-    for sel in ("1\n13\n", "1\n1\n"):
-        if _跑(gmx, "hbond", "-s", "md.tpr", "-f", xtc.name, "-num", str(hb_xvg.name), inp=sel, wd=wd):
+    hb_ok = False
+    ndx_candidates = ("index.ndx", "to.ndx")
+    for ndx_name in ndx_candidates:
+        ndx_p = wd / ndx_name
+        if not ndx_p.is_file():
+            continue
+        groups: dict[str, int] = {}
+        idx = 0
+        for ln in ndx_p.read_text(encoding="utf-8", errors="replace").splitlines():
+            s = ln.strip()
+            if s.startswith("[") and s.endswith("]"):
+                groups[s[1:-1].strip()] = idx
+                idx += 1
+        rec = groups.get("Receptor")
+        lig = groups.get("Ligand")
+        if rec is None or lig is None:
+            continue
+        if _跑(
+            gmx, "hbond",
+            "-s", "md.tpr", "-f", xtc.name, "-n", ndx_name,
+            "-num", str(hb_xvg.name),
+            inp=f"{rec}\n{lig}\n",
+            wd=wd,
+        ):
             avg = _读xvg列均值(hb_xvg)
             _xvg转csv(hb_xvg, csv_dir / "hbond.csv", ["time_ps", "hbond_count"])
-            _出图(hb_xvg, plot_dir / "hbond.png", "Time (ps)", "H-bonds", "H-bonds", color="#81c4f4")
+            _出图(
+                hb_xvg, plot_dir / "hbond.png",
+                "Time (ps)", "H-bonds", "Protein–Ligand H-bonds", color="#81c4f4",
+            )
             if avg is not None:
-                _记(f"[氢键] 平均氢键数: {avg:.2f}")
+                _记(f"[氢键] 蛋白–配体平均氢键数: {avg:.2f}（组 Receptor/Ligand @ {ndx_name}）")
+            hb_ok = True
             break
-    else:
-        _记("[氢键] 计算失败（可能需手动指定 index 组）")
+    if not hb_ok:
+        _记("[氢键] 计算失败（缺少 index.ndx/to.ndx 中的 Receptor/Ligand 组）")
 
     # 能量
     edr = wd / "md.edr"

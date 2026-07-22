@@ -352,8 +352,15 @@ def _从gro找配体残基(gro: Path) -> Optional[str]:
 def _读环肽残基范围(wd: Path) -> Optional[Tuple[int, int]]:
     """读取肽在 gro 中的实际残基号范围（禁止直接用设计号 9001）。
 
-    tleap combine 后残基号会重排；优先按序列映射到 md.gro 中的真实编号。
+    优先读统一配体定义 webmd_ligand_spec.json；再回退 peptide_resid_map / meta。
     """
+    try:
+        from ligand_spec import load_ligand_spec, peptide_resid_range_from_spec
+        r = peptide_resid_range_from_spec(load_ligand_spec(wd))
+        if r is not None:
+            return r
+    except Exception:
+        pass
     try:
         from peptide_resid_map import peptide_ri_range_for_ndx
         mapped = peptide_ri_range_for_ndx(wd)
