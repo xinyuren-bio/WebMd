@@ -1296,6 +1296,40 @@ async def download_md_analysis(task_id: str, user: dict = Depends(get_current_us
     )
 
 
+def _admin_md_file_response(task_id: str, admin_key: str, *, kind: str) -> FileResponse:
+    """管理员凭 admin_key 下载 MD 交付包（供邮件直链，无需用户登录）。"""
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.md_status != "completed":
+        raise HTTPException(status_code=400, detail="MD 模拟尚未完成")
+    if kind == "simulation":
+        fp = task.md_sim_zip
+        name = f"{task_id}_simulation.zip"
+        missing = "模拟数据包尚未生成"
+    else:
+        fp = task.md_analysis_zip
+        name = f"{task_id}_analysis.zip"
+        missing = "分析结果包尚未生成"
+    if not fp or not Path(fp).is_file():
+        raise HTTPException(status_code=404, detail=missing)
+    return FileResponse(fp, media_type="application/zip", filename=name)
+
+
+@router.get("/admin/tasks/{task_id}/download/md-simulation")
+async def admin_download_md_simulation(task_id: str, admin_key: str = ""):
+    """管理员下载 MD 模拟数据包（邮件直链可用）。"""
+    return _admin_md_file_response(task_id, admin_key, kind="simulation")
+
+
+@router.get("/admin/tasks/{task_id}/download/md-analysis")
+async def admin_download_md_analysis(task_id: str, admin_key: str = ""):
+    """管理员下载 MD 分析结果包（邮件直链可用）。"""
+    return _admin_md_file_response(task_id, admin_key, kind="analysis")
+
+
 @router.get("/tasks/{task_id}/logs")
 async def get_task_logs(task_id: str, user: dict = Depends(get_current_user)):
     task = _task_owner_or_404(task_id, user)
