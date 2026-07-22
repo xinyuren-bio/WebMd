@@ -116,6 +116,7 @@ def _sync_analysis_scripts_remote(t: Task) -> None:
                 "fel_plot.py",
                 "plot_style.py",
                 "install_dssp.sh",
+                "USER_RESULT_GUIDE.md",
             ):
                 src = _ENGINE_DIR / name
                 if not src.is_file():

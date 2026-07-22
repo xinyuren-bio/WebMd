@@ -201,12 +201,25 @@ fi
   echo ""
   echo "【拓扑】"
   echo "system.top / md.tpr / to.ndx：仍为全体系（含水/离子），便于在 GROMACS 中复现或再分析。"
+  echo ""
+  echo "【使用说明】"
+  echo "请先阅读同包中的 WebMD_结果使用指南.md（PyMOL 打开方式、看图说明、论文提示词与 Methods 模板）。"
 } > "$STAGE/$README"
+
+# 随包附上湿实验友好使用指南
+if [ -f USER_RESULT_GUIDE.md ]; then
+  cp -f USER_RESULT_GUIDE.md "$STAGE/WebMD_结果使用指南.md"
+elif [ -f WebMD_结果使用指南.md ]; then
+  cp -f WebMD_结果使用指南.md "$STAGE/WebMD_结果使用指南.md"
+fi
 
 rm -f "$SIM_ZIP"
 (
   cd "$STAGE"
   ZIP_LIST=(to.ndx system.top md.tpr complex.pdb "$README")
+  if [ -f "WebMD_结果使用指南.md" ]; then
+    ZIP_LIST+=("WebMD_结果使用指南.md")
+  fi
   if [ "$HAVE_XTC" -eq 1 ] && [ -s fit.xtc ]; then
     ZIP_LIST+=(fit.xtc)
   fi
@@ -234,8 +247,16 @@ fi
 if [ -d analysis_plots ]; then
   find analysis_plots -maxdepth 1 -type f -name '*.csv' -print -delete 2>/dev/null || true
 fi
+# 分析结果包同样附上使用指南（方便只下载分析包的用户）
+if [ -f USER_RESULT_GUIDE.md ]; then
+  cp -f USER_RESULT_GUIDE.md "WebMD_结果使用指南.md"
+fi
 rm -f "$ANAL_ZIP"
-zip -r -q "$ANAL_ZIP" analysis_csv analysis_plots
+if [ -f "WebMD_结果使用指南.md" ]; then
+  zip -r -q "$ANAL_ZIP" analysis_csv analysis_plots "WebMD_结果使用指南.md"
+else
+  zip -r -q "$ANAL_ZIP" analysis_csv analysis_plots
+fi
 if [ ! -s "$ANAL_ZIP" ]; then
   echo "错误：$ANAL_ZIP 为空"
   exit 1
