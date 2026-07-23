@@ -1511,6 +1511,70 @@ async def admin_users_stats(admin_key: str = ""):
     }
 
 
+@router.post("/admin/tasks/{task_id}/reassign")
+async def admin_reassign_task(
+    task_id: str,
+    email: str = Query(default="", min_length=3, max_length=200),
+    admin_key: str = "",
+):
+    """管理员：将任务归属转移到指定注册邮箱（内存+磁盘同步，不中断 MD）。
+
+    设计思路：代跑后改 user_id，MD 完成发信时按新归属查邮箱；
+    不重启服务，避免丢失内存中的 AutoDL SSH 密码。
+    """
+    if not verify_admin_key(admin_key):
+        raise HTTPException(status_code=403, detail="管理员密钥无效")
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    em = (email or "").strip().lower()
+    if not em or "@" not in em:
+        raise HTTPException(status_code=400, detail="请提供有效邮箱")
+    db = Path(USERS_DB)
+    target = get_user_by_email(db, em)
+    if not target:
+        raise HTTPException(status_code=404, detail=f"未找到注册用户：{em}")
+
+    old_uid = task.user_id or ""
+    old_u = get_user_by_id(db, old_uid) if old_uid else None
+    old_email = (old_u or {}).get("email", "") or old_uid or "—"
+    new_uid = target["user_id"]
+    new_email = target.get("email", em)
+
+    if old_uid == new_uid:
+        return {
+            "ok": True,
+            "task_id": task_id,
+            "unchanged": True,
+            "user_id": new_uid,
+            "email": new_email,
+        }
+
+    task.user_id = new_uid
+    task.save()
+    msg = f"管理员转移任务归属：{old_email} ({old_uid}) -> {new_email} ({new_uid})"
+    # 写入任务日志，便于日后核对
+    try:
+        from engine.autodl_runner import _append_log
+
+        _append_log(task, msg)
+    except Exception:
+        lines = list(task.log_lines or [])
+        lines.append(msg)
+        task.log_lines = lines[-200:]
+        task.save()
+    logger.info("%s · 任务 %s", msg, task_id)
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "from_user_id": old_uid,
+        "from_email": old_email,
+        "user_id": new_uid,
+        "email": new_email,
+        "md_status": task.md_status,
+    }
+
+
 @router.get("/admin/users/{user_id}/tasks")
 async def admin_user_tasks(
     user_id: str,

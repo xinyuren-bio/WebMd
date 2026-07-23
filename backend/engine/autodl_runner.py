@@ -5,6 +5,7 @@
 # 生成时间：2026-07-14
 # ==================================================
 
+import json
 import logging
 import re
 import threading
@@ -406,12 +407,30 @@ def finalize_md_delivery(task_id: str) -> None:
     from config import SITE_BASE_URL, USERS_DB
     from user_store import get_user_by_id
     from email_util import send_admin_md_completed_notify, send_user_md_completed_notify
+    from models import META_FILENAME
 
     t = tasks.get(task_id)
     if not t:
         return
     if t.md_status != "completed":
         return
+
+    # 发信前从磁盘刷新归属，支持运行中转移任务（不丢 SSH 密码场景）
+    try:
+        meta_fp = Path(t.work_dir) / META_FILENAME if t.work_dir else None
+        if meta_fp and meta_fp.is_file():
+            disk = json.loads(meta_fp.read_text(encoding="utf-8"))
+            disk_uid = (disk.get("user_id") or "").strip()
+            if disk_uid and disk_uid != (t.user_id or ""):
+                logger.info(
+                    "任务 %s 归属已从磁盘刷新：%s -> %s",
+                    task_id,
+                    t.user_id,
+                    disk_uid,
+                )
+                t.user_id = disk_uid
+    except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.warning("任务 %s 刷新归属失败: %s", task_id, e)
 
     _append_log(t, "开始拉取交付压缩包…")
     sim_p, anal_p = "", ""
