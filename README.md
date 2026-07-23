@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="http://8.219.168.5:8000/"><img src="https://img.shields.io/badge/进入网站-WebMD-0d9488?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Enter WebMD"></a>
+  <a href="http://39.106.154.145/"><img src="https://img.shields.io/badge/进入网站-WebMD-0d9488?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Enter WebMD"></a>
   &nbsp;
   <img src="https://img.shields.io/badge/Engine-GROMACS-6366f1?style=for-the-badge" alt="GROMACS">
   &nbsp;
@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="http://8.219.168.5:8000/"><strong>👉 http://8.219.168.5:8000/</strong></a>
+  <a href="http://39.106.154.145/"><strong>👉 http://39.106.154.145/</strong></a>
 </p>
 
 ---
@@ -31,7 +31,7 @@
 
 | 步骤 | 操作 |
 |:----:|------|
-| 1 | 打开 **[WebMD 网站](http://8.219.168.5:8000/)** |
+| 1 | 打开 **[WebMD 网站](http://39.106.154.145/)** |
 | 2 | 右上角 **注册 / 登录**（提交任务与下载需要账号） |
 | 3 | 点击 **「体系准备」** 或首页 **「开始体系准备」** |
 | 4 | 按下方流程上传结构并提交 |
@@ -155,13 +155,13 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 1. `backend/.env` 已设置强密钥，且 `WEBMD_ENV=production`
 2. `systemctl enable --now webmd` 常驻，避免手动 nohup
-3. 防火墙放行所需端口；任务目录 `backend/tasks/` 定期清理
+3. 防火墙放行所需端口；任务目录默认保留 **7 天** 后自动删除（`WEBMD_TASK_RETENTION_DAYS`）
 4. AutoDL SSH 密码仅在调度时驻留内存，**不会**写入 `task_meta.json`
 
 ---
 
 <p align="center">
-  <a href="http://8.219.168.5:8000/"><strong>打开 WebMD →</strong></a>
+  <a href="http://39.106.154.145/"><strong>打开 WebMD →</strong></a>
   &nbsp;·&nbsp;
   © 2026 WebMD
 </p>

@@ -156,11 +156,11 @@ def is_production() -> bool:
     """判断是否按生产环境规则运行。"""
     if WEBMD_ENV in ("prod", "production"):
         return True
-    # 未显式标注但站点 URL 已指向公网域名时，也视为生产
+    # 未显式标注但站点 URL 已指向公网域名/生产 IP 时，也视为生产
     u = (SITE_BASE_URL or "").lower()
     if "localhost" in u or "127.0.0.1" in u:
         return False
-    return any(x in u for x in ("webmd.tech", "https://"))
+    return any(x in u for x in ("webmd.tech", "39.106.154.145", "https://"))
 
 
 def cors_allow_origins() -> list[str]:
@@ -173,19 +173,20 @@ def cors_allow_origins() -> list[str]:
         origins.add("http://" + base[len("https://"):])
     elif base.startswith("http://"):
         origins.add("https://" + base[len("http://"):])
-    # 常见带端口访问
-    if "webmd.tech" in base:
-        origins.update(
-            {
-                "http://webmd.tech",
-                "https://webmd.tech",
-                "http://www.webmd.tech",
-                "https://www.webmd.tech",
-                "http://webmd.tech:8000",
-                "http://www.webmd.tech:8000",
-                "http://8.219.168.5:8000",
-            }
-        )
+    # 临时公网 IP（ICP 备案前）与历史/域名访问入口
+    origins.update(
+        {
+            "http://39.106.154.145",
+            "http://39.106.154.145:8000",
+            "http://webmd.tech",
+            "https://webmd.tech",
+            "http://www.webmd.tech",
+            "https://www.webmd.tech",
+            "http://webmd.tech:8000",
+            "http://www.webmd.tech:8000",
+            "http://8.219.168.5:8000",
+        }
+    )
     return sorted(o for o in origins if o)
 
 
