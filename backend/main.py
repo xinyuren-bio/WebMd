@@ -44,6 +44,18 @@ async def lifespan(_app: FastAPI):
     load_tasks_from_disk(TASKS_DIR)
     init_db(Path(USERS_DB))
 
+    # 把现存已完成 MD 补进永久累计（幂等），避免升级前历史被任务清理抹掉
+    try:
+        from analytics_util import sync_md_completion_from_tasks
+        from config import ANALYTICS_FILE
+        from models import tasks as _tasks
+
+        n = sync_md_completion_from_tasks(Path(ANALYTICS_FILE), _tasks.values())
+        if n:
+            logger.info("已补录 %d 条历史 MD 完成到永久统计", n)
+    except Exception as e:
+        logger.warning("同步 MD 永久统计失败: %s", e)
+
     if not SKIP_AUTODL_DISPATCH:
         try:
             from engine.autodl_runner import dispatch_queued_jobs

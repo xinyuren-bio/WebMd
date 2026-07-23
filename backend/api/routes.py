@@ -47,7 +47,12 @@ from payment_util import (
     free_10ns_remaining,
     FREE_10NS_QUOTA,
 )
-from analytics_util import record_visit, get_analytics_stats, collect_md_completion_stats
+from analytics_util import (
+    record_visit,
+    get_analytics_stats,
+    get_md_completion_stats,
+    record_md_completion,
+)
 from email_util import (
     send_admin_payment_notify,
     send_admin_need_autodl_notify,
@@ -1117,6 +1122,19 @@ async def md_completion_callback(
     user_email = u.get("email", "") if u else ""
     failed = task.md_status == "failed"
 
+    # 成功完成才永久累计（与任务目录是否保留无关；按 task_id 幂等）
+    if not failed:
+        try:
+            ns = float((task.params or {}).get("simulation_time_ns") or 0)
+        except (TypeError, ValueError):
+            ns = 0.0
+        record_md_completion(
+            Path(ANALYTICS_FILE),
+            task_id=task.task_id,
+            user_id=task.user_id or "",
+            simulation_time_ns=ns,
+        )
+
     if failed:
         send_admin_md_completed_notify(
             task_id=task_id,
@@ -1450,7 +1468,8 @@ async def admin_analytics_stats(admin_key: str = ""):
     if not verify_admin_key(admin_key):
         raise HTTPException(status_code=403, detail="管理员密钥无效")
     data = get_analytics_stats(Path(ANALYTICS_FILE))
-    md = collect_md_completion_stats(tasks.values())
+    # MD 完成数读永久累计，不随任务目录清理减少
+    md = get_md_completion_stats(Path(ANALYTICS_FILE))
     # 为排行补充邮箱，便于对照
     db = Path(USERS_DB)
     enriched = []
@@ -1471,7 +1490,7 @@ async def admin_users_stats(admin_key: str = ""):
     if not verify_admin_key(admin_key):
         raise HTTPException(status_code=403, detail="管理员密钥无效")
     db = Path(USERS_DB)
-    md = collect_md_completion_stats(tasks.values())
+    md = get_md_completion_stats(Path(ANALYTICS_FILE))
     per_user = md.get("md_per_user") or {}
     # 每用户任务数（含未支付/失败）
     task_counts: dict[str, int] = {}
