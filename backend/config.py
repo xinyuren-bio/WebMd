@@ -147,7 +147,8 @@ SKIP_TASK_CLEANUP = os.environ.get("WEBMD_SKIP_TASK_CLEANUP", "0").strip().lower
     "1", "true", "yes",
 )
 
-# 任务目录保留天数（超过则自动删除）；清理间隔秒数（默认每天）
+# 非永久保留任务的目录保留天数（失败/未支付等）；10/100 ns MD 已完成永久保留
+# 清理间隔秒数（默认每天）
 TASK_RETENTION_DAYS = int(os.environ.get("WEBMD_TASK_RETENTION_DAYS", "7"))
 TASK_CLEANUP_INTERVAL_SEC = int(os.environ.get("WEBMD_TASK_CLEANUP_INTERVAL_SEC", "86400"))
 

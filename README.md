@@ -155,7 +155,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 1. `backend/.env` 已设置强密钥，且 `WEBMD_ENV=production`
 2. `systemctl enable --now webmd` 常驻，避免手动 nohup
-3. 防火墙放行所需端口；任务目录默认保留 **7 天** 后自动删除（`WEBMD_TASK_RETENTION_DAYS`）
+3. 防火墙放行所需端口；**10/100 ns 且 MD 已完成**的任务永久保留，其余（失败/未支付等）默认 **7 天** 后删除（`WEBMD_TASK_RETENTION_DAYS`）
 4. AutoDL SSH 密码仅在调度时驻留内存，**不会**写入 `task_meta.json`
 
 ---
