@@ -296,8 +296,14 @@
         }
         return r.json();
       })
-      .then(function () {
-        showMsg("任务 " + taskId + " SSH 已保存，正在自动提交 MD…", true);
+      .then(function (data) {
+        var running = data && data.md_status === "running";
+        showMsg(
+          running
+            ? ("任务 " + taskId + " SSH 密码已保存（模拟仍在运行，完成后将用此密码拉包发信）")
+            : ("任务 " + taskId + " SSH 已保存，正在自动提交 MD…"),
+          true
+        );
         if (pwdEl) pwdEl.value = "";
         loadPending();
       })
@@ -338,9 +344,16 @@
     items.forEach(function (item) {
       var sshVal = item.ssh_command || "";
       var sidVal = item.server_id || "";
-      var hostInfo = item.ssh_configured
-        ? (item.ssh_host + ":" + item.ssh_port + (item.server_id ? " · 实例 " + item.server_id : ""))
-        : "未配置";
+      var hostInfo;
+      if (item.ssh_configured) {
+        hostInfo = item.ssh_host + ":" + item.ssh_port
+          + (item.server_id ? " · 实例 " + item.server_id : "");
+      } else if (item.ssh_host_saved || item.ssh_command) {
+        hostInfo = "主机已保存，密码未配置（请重填密码）"
+          + (item.server_id ? " · 实例 " + item.server_id : "");
+      } else {
+        hostInfo = "未配置";
+      }
       html += '<div class="md-row admin-md-card" data-id="' + item.task_id + '">'
         + '<p><strong>任务</strong> <code>' + item.task_id + "</code> · "
         + (item.user_email || "—") + " · "
@@ -353,13 +366,19 @@
         html += '<p class="admin-empty" style="padding:0;color:#c0392b;">' + item.error_message + "</p>";
       }
 
-      if (item.md_status === "queued" || item.md_status === "failed") {
+      // queued/failed：完整配置并提交；running 且缺密码：允许补填（完成后拉包发信）
+      var showSshForm = item.md_status === "queued" || item.md_status === "failed"
+        || (item.md_status === "running" && !item.ssh_configured);
+      if (showSshForm) {
+        var saveLabel = (item.md_status === "running")
+          ? "保存密码（用于完成后拉包）"
+          : "保存并提交";
         html += '<div class="admin-ssh-row">'
           + '<input type="text" class="ssh-server-id payment-payer-note" placeholder="AutoDL 实例 ID" value="' + sidVal.replace(/"/g, "&quot;") + '">'
           + '<input type="text" class="ssh-cmd payment-payer-note" placeholder="ssh -p 50977 root@connect.westx.seetacloud.com" value="' + sshVal.replace(/"/g, "&quot;") + '">'
           + '<input type="password" class="ssh-pwd payment-payer-note" placeholder="SSH 密码" autocomplete="off">'
-          + '<button type="button" class="btn btn-primary btn-save-ssh">保存并提交</button>';
-        if (item.ssh_configured) {
+          + '<button type="button" class="btn btn-primary btn-save-ssh">' + saveLabel + "</button>";
+        if (item.md_status !== "running" && item.ssh_configured) {
           html += '<button type="button" class="btn btn-secondary btn-retry">重试提交</button>';
         }
         html += "</div>";

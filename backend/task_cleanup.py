@@ -144,6 +144,12 @@ def cleanup_expired_tasks(
         try:
             shutil.rmtree(d)
             tasks.pop(tid, None)
+            try:
+                from autodl_secrets import purge_autodl_password
+
+                purge_autodl_password(tid)
+            except Exception:
+                pass
             removed.append(tid)
             logger.info("已删除任务目录 %s（约 %.1f 天）", tid, age / 86400.0)
         except OSError as e:

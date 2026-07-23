@@ -36,6 +36,26 @@ class TestSecurityHardening(unittest.TestCase):
             self.assertNotIn("autodl_ssh_password", data)
             self.assertEqual(data.get("autodl_ssh_host"), "example.com")
 
+    def test_autodl_secrets_file_roundtrip(self) -> None:
+        """密码可写入独立 secrets 文件并读回，且不进 task_meta。"""
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            secrets = work / "autodl_ssh_secrets.json"
+            with mock.patch("autodl_secrets._SECRETS_PATH", secrets):
+                from autodl_secrets import save_autodl_password, load_autodl_password
+
+                save_autodl_password("abc123def456", "pw-secret")
+                self.assertEqual(load_autodl_password("abc123def456"), "pw-secret")
+            t = Task(
+                task_id="abc123def456",
+                status=TaskStatus.COMPLETED,
+                work_dir=str(work),
+                autodl_ssh_password="pw-secret",
+            )
+            t.save()
+            data = json.loads((work / "task_meta.json").read_text(encoding="utf-8"))
+            self.assertNotIn("autodl_ssh_password", data)
+
     def test_load_ignores_legacy_password(self) -> None:
         """即使旧 meta 含明文密码，加载后内存也不恢复。"""
         with tempfile.TemporaryDirectory() as td:

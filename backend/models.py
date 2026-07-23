@@ -264,4 +264,11 @@ def load_tasks_from_disk(tasks_dir: str) -> None:
         task = Task.load(meta)
         if task:
             tasks[task.task_id] = task
+    # SSH 密码单独文件恢复，避免写进 task_meta.json
+    try:
+        from autodl_secrets import restore_passwords_into_tasks
+
+        restore_passwords_into_tasks(tasks)
+    except Exception as e:
+        logger.warning("恢复 AutoDL SSH 密码失败: %s", e)
     logger.info("已从磁盘恢复 %d 个任务", len(tasks))

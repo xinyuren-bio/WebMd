@@ -1010,6 +1010,7 @@ async def admin_md_queue(admin_key: str = ""):
                 "simulation_time_ns": t.params.get("simulation_time_ns"),
                 "atom_count": t.atom_count,
                 "ssh_configured": bool(t.autodl_ssh_host and t.autodl_ssh_password),
+                "ssh_host_saved": bool(t.autodl_ssh_host),
                 "ssh_host": t.autodl_ssh_host or "",
                 "ssh_port": t.autodl_ssh_port,
                 "ssh_command": t.autodl_ssh_command or "",
@@ -1048,11 +1049,20 @@ async def save_task_autodl_ssh(
     task.autodl_ssh_user = parsed["user"]
     task.autodl_ssh_password = body.password
     task.autodl_server_id = body.server_id.strip()
+    # 密码单独落盘，刷新/重启后仍可用；不写 task_meta.json
+    try:
+        from autodl_secrets import save_autodl_password
+
+        save_autodl_password(task.task_id, body.password)
+    except Exception as e:
+        logger.warning("保存 AutoDL 密码到密码库失败: %s", e)
     if task.md_status in ("none", "failed"):
         task.md_status = "queued"
     task.save()
 
-    background_tasks.add_task(submit_md_job, task_id)
+    # 仅排队态才真正上传启动；运行中只更新密码/SSH，便于完成后拉包
+    if task.md_status == "queued":
+        background_tasks.add_task(submit_md_job, task_id)
 
     return {
         "ok": True,
