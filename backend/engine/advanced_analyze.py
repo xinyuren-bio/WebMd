@@ -2,7 +2,7 @@
 # 功能说明：高级轨迹分析（三组 RMSD、Gibbs FEL、SASA+二级结构）
 # 使用方法：由 traj_analyze.py 调用 run_advanced(...)，或独立运行
 # 依赖环境：GROMACS gmx；numpy、matplotlib
-# 生成时间：2026-07-13
+# 生成时间：2026-07-23
 # ==================================================
 
 from __future__ import annotations
@@ -537,6 +537,58 @@ def _resolve_groups(wd: Path, gmx: str) -> Dict[str, int]:
     return out
 
 
+def _确保配体重原子组(
+    wd: Path,
+    gmx: str,
+    lig_gname: str,
+    log: Callable[[str], None],
+) -> Optional[int]:
+    """确保 to.ndx 中存在配体「非氢/重原子」组，供配体 RMSD 排除 H。
+
+    设计思路：在原配体组上做 make_ndx 交：`Ligand & ! a H*`（原子名以 H 开头视为氢），
+    结果命名为 `{lig_gname}_Heavy`；已存在则直接复用。
+    """
+    ndx = wd / "to.ndx"
+    if not ndx.is_file():
+        return None
+    heavy_name = f"{lig_gname}_Heavy"
+    groups = _解析ndx组(ndx)
+    if heavy_name in groups:
+        return groups[heavy_name]
+    lig_id = groups.get(lig_gname)
+    if lig_id is None:
+        return None
+    gro = wd / "md.gro"
+    if not gro.is_file():
+        gro = wd / "npt.gro"
+    if not gro.is_file():
+        # 无 gro 时仍可用 tpr 建组
+        struct = "md.tpr"
+    else:
+        struct = gro.name
+    nxt = max(groups.values()) + 1 if groups else 0
+    # 组号 & ! a H*：去掉原子名以 H 开头的氢原子
+    ok = _跑(
+        gmx,
+        "make_ndx",
+        "-f",
+        struct,
+        "-n",
+        ndx.name,
+        "-o",
+        ndx.name,
+        inp=f"{lig_id} & ! a H*\nname {nxt} {heavy_name}\nq\n",
+        wd=wd,
+    )
+    groups2 = _解析ndx组(ndx)
+    hid = groups2.get(heavy_name)
+    if ok and hid is not None:
+        log(f"[RMSD] 已建重原子组 {heavy_name}（来源 {lig_gname}，排除 H）")
+        return hid
+    log(f"[RMSD] 建重原子组 {heavy_name} 失败，将回退为全原子配体组")
+    return None
+
+
 def _跑rmsd图(
     wd: Path,
     gmx: str,
@@ -549,6 +601,8 @@ def _跑rmsd图(
     csv_dir: Path,
     plot_dir: Path,
     log: Callable[[str], None],
+    *,
+    note: str = "",
 ) -> Tuple[List[float], List[float]]:
     """以 backbone 为参考叠合，计算指定组 RMSD 并出单图（单位 Å，md_xhs 风格）。"""
     from plot_style import RMSD_Y_PAD, plot_line
@@ -568,7 +622,8 @@ def _跑rmsd图(
     plot_dir.mkdir(parents=True, exist_ok=True)
     plot_line(xs, ys, str(plot_dir / f"rmsd_{tag}.png"), "Time (ns)", "RMSD (Å)", "RMSD", color=color, y_pad=RMSD_Y_PAD)
     avg = sum(ys) / len(ys)
-    log(f"[RMSD-{tag}] 均值: {avg:.2f} Å（参考: 蛋白 Backbone）")
+    extra = f"；{note}" if note else ""
+    log(f"[RMSD-{tag}] 均值: {avg:.2f} Å（参考: 蛋白 Backbone{extra}）")
     return xs, ys
 
 
@@ -944,9 +999,15 @@ def run_advanced(
             gid = _找组号(ndx_groups, gname)
             if gid is None:
                 continue
+            # 配体 RMSD 仅用重原子（排除 H）
+            heavy_id = _确保配体重原子组(wd, gmx, gname, log)
+            calc_id = heavy_id if heavy_id is not None else gid
             color = lig_colors[i % len(lig_colors)]
             tag = res.lower()
-            xs, ys = _跑rmsd图(wd, gmx, xtc_name, bb, gid, tag, res, color, csv_dir, plot_dir, log)
+            xs, ys = _跑rmsd图(
+                wd, gmx, xtc_name, bb, calc_id, tag, res, color, csv_dir, plot_dir, log,
+                note="仅配体重原子",
+            )
             if xs:
                 rmsd_series.append((xs, ys, res, color))
                 per_lig_done = True
@@ -958,7 +1019,18 @@ def run_advanced(
             )
 
     if not per_lig_done and "ligand" in groups:
-        xs, ys = _跑rmsd图(wd, gmx, xtc_name, bb, groups["ligand"], "ligand", "Ligand", COLOR_LIGAND, csv_dir, plot_dir, log)
+        # 配体 RMSD 仅用重原子（排除 H）；按组号反查真实组名（可能是 Ligand/MOL/UNL）
+        ndx_groups = _解析ndx组(ndx) if ndx.is_file() else {}
+        lig_name = next(
+            (k for k, v in ndx_groups.items() if v == groups["ligand"]),
+            "Ligand",
+        )
+        heavy_id = _确保配体重原子组(wd, gmx, lig_name, log)
+        calc_id = heavy_id if heavy_id is not None else groups["ligand"]
+        xs, ys = _跑rmsd图(
+            wd, gmx, xtc_name, bb, calc_id, "ligand", "Ligand", COLOR_LIGAND, csv_dir, plot_dir, log,
+            note="仅配体重原子",
+        )
         if xs:
             rmsd_series.append((xs, ys, "Ligand", COLOR_LIGAND))
     elif not per_lig_done:
