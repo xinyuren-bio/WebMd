@@ -1,5 +1,5 @@
 # ==================================================
-# 功能说明：按策略清理任务目录（仅永久保留 10/100 ns 已完成 MD）
+# 功能说明：按策略清理任务目录（永久保留 10/100/200 ns 已完成 MD）
 # 使用方法：启动时调用 cleanup_expired_tasks / start_cleanup_scheduler
 # 依赖环境：Python 标准库
 # 生成时间：2026-07-21
@@ -35,7 +35,7 @@ _PREP_ACTIVE = frozenset(
 _MD_ACTIVE = frozenset({"queued", "running"})
 
 # 仅这些时长的「MD 已完成」任务永久保留；其余过期可删
-_KEEP_MD_NS = frozenset({10.0, 100.0})
+_KEEP_MD_NS = frozenset({10.0, 100.0, 200.0})
 
 
 def _task_age_seconds(d: Path, meta: dict | None) -> float:
@@ -73,7 +73,7 @@ def _sim_ns(meta: dict) -> float:
 
 
 def _is_kept_md_completed(meta: dict | None) -> bool:
-    """是否为应永久保留的 10/100 ns MD 完成任务。"""
+    """是否为应永久保留的 10/100/200 ns MD 完成任务。"""
     if not meta:
         return False
     if str(meta.get("md_status") or "none") != "completed":
@@ -96,7 +96,7 @@ def _should_keep_active(meta: dict | None) -> bool:
 
 
 def _should_keep(meta: dict | None) -> bool:
-    """是否跳过清理：进行中，或 10/100 ns MD 已完成。"""
+    """是否跳过清理：进行中，或 10/100/200 ns MD 已完成。"""
     return _should_keep_active(meta) or _is_kept_md_completed(meta)
 
 
@@ -109,9 +109,9 @@ def cleanup_expired_tasks(
     """清理可删任务目录，并从内存 tasks 移除。
 
     设计思路：
-    - 永久保留：md_status=completed 且时长为 10 或 100 ns（交付产物）
+    - 永久保留：md_status=completed 且时长为 10 / 100 / 200 ns（交付产物）
     - 临时保留：前处理进行中、MD 排队/运行中
-    - 其余（前处理失败、未支付、仅前处理完成、200 ns 完成、MD 失败等）
+    - 其余（前处理失败、未支付、仅前处理完成、MD 失败等）
       超过 retention_days 后删除
 
     返回已删除（或 dry_run 将删）的 task_id 列表。
@@ -129,7 +129,7 @@ def cleanup_expired_tasks(
         tid = d.name
         meta = _read_meta(d)
         if _is_kept_md_completed(meta):
-            logger.debug("永久保留（10/100 ns MD 完成）: %s", tid)
+            logger.debug("永久保留（10/100/200 ns MD 完成）: %s", tid)
             continue
         if _should_keep_active(meta):
             logger.info("跳过清理（仍在处理）: %s", tid)
@@ -151,7 +151,7 @@ def cleanup_expired_tasks(
 
     if removed and not dry_run:
         logger.info(
-            "任务清理完成：删除 %d 个；永久保留 10/100 ns 已完成 MD；其余保留期=%d 天",
+            "任务清理完成：删除 %d 个；永久保留 10/100/200 ns 已完成 MD；其余保留期=%d 天",
             len(removed),
             days,
         )
@@ -176,7 +176,7 @@ def start_cleanup_scheduler(
     th = threading.Thread(target=_loop, name="task-cleanup", daemon=True)
     th.start()
     logger.info(
-        "已启动任务清理线程：永久保留 10/100 ns 已完成 MD；其余 %d 天后删，间隔 %d 秒",
+        "已启动任务清理线程：永久保留 10/100/200 ns 已完成 MD；其余 %d 天后删，间隔 %d 秒",
         retention_days,
         max(3600, int(interval_sec)),
     )

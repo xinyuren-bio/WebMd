@@ -1,5 +1,5 @@
 # ==================================================
-# 功能说明：任务目录清理策略单元测试（10/100 ns 永久保留）
+# 功能说明：任务目录清理策略单元测试（10/100/200 ns 永久保留）
 # 使用方法：在 backend 目录 python -m unittest tests.test_task_cleanup
 # 依赖环境：Python 标准库
 # 生成时间：2026-07-21
@@ -18,7 +18,7 @@ from task_cleanup import cleanup_expired_tasks
 
 
 class TestTaskCleanup(unittest.TestCase):
-    """验证 10/100 ns MD 永久保留与其余过期删除。"""
+    """验证 10/100/200 ns MD 永久保留与其余过期删除。"""
 
     def tearDown(self) -> None:
         tasks.clear()
@@ -66,8 +66,8 @@ class TestTaskCleanup(unittest.TestCase):
             self.assertFalse((root / "oldfailed001").exists())
             self.assertTrue((root / "newfailed001").exists())
 
-    def test_keep_10_and_100_ns_md_forever(self) -> None:
-        """10/100 ns MD 已完成即使很旧也保留。"""
+    def test_keep_10_100_200_ns_md_forever(self) -> None:
+        """10/100/200 ns MD 已完成即使很旧也保留。"""
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             old = time.time() - 365 * 86400
@@ -78,12 +78,16 @@ class TestTaskCleanup(unittest.TestCase):
                 root, "md100keep001", created_at=old, status="completed", md="completed", ns=100,
             )
             self._write_task(
-                root, "md200delete1", created_at=old, status="completed", md="completed", ns=200,
+                root, "md200keep001", created_at=old, status="completed", md="completed", ns=200,
+            )
+            self._write_task(
+                root, "md50delete01", created_at=old, status="completed", md="completed", ns=50,
             )
             removed = cleanup_expired_tasks(root, retention_days=7)
-            self.assertEqual(removed, ["md200delete1"])
+            self.assertEqual(removed, ["md50delete01"])
             self.assertTrue((root / "md10keep0001").exists())
             self.assertTrue((root / "md100keep001").exists())
+            self.assertTrue((root / "md200keep001").exists())
 
     def test_keep_active_prep_even_if_old(self) -> None:
         """仍在溶剂化的任务即使很旧也不删。"""
