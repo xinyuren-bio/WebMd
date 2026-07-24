@@ -322,6 +322,9 @@ async def create_task(
     tau_p: float = Form(default=DEFAULT_PARAMS["tau_p"]),
     report_interval_ps: float = Form(default=DEFAULT_PARAMS["report_interval_ps"]),
     ligand_add_hydrogens: str = Form(default="1"),
+    ligand_resname: str = Form(default=""),
+    ligand_resname_2: str = Form(default=""),
+    ligand_resname_3: str = Form(default=""),
 ):
     """创建新的 GROMACS MD 前处理任务（需登录）。"""
     if simulation_time_ns not in ALLOWED_SIM_NS:
@@ -381,6 +384,7 @@ async def create_task(
         raise HTTPException(status_code=400, detail="环肽暂不支持 PDBQT 对接构象模式")
 
     mol2_paths: list[str] = []
+    ligand_resnames: list[str] = []
     cyclic_pdb_path: Optional[str] = None
     pdb_path = work_dir / "protein.pdb"
     lig_res_keys: list[str] = []
@@ -570,6 +574,18 @@ async def create_task(
             ),
         )
 
+    # 小分子：解析自定义残基名（空则 LIG1/LIG2/LIG3）；分开上传/复合物/PDBQT 共用
+    if mol2_paths and not is_pep:
+        from engine.ligand import resolve_ligand_resnames
+
+        try:
+            ligand_resnames = resolve_ligand_resnames(
+                len(mol2_paths),
+                [ligand_resname, ligand_resname_2, ligand_resname_3],
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
     params = {
         "temperature": temperature,
         "pressure": pressure,
@@ -593,6 +609,7 @@ async def create_task(
         "ligand_residues": ",".join(lig_res_keys) if not is_pep and pep_mode == "complex" else "",
         "ligand_pose_index": pose_idx if pep_mode == "pdbqt" else 0,
         "pdbqt_pose_count": pose_count if pep_mode == "pdbqt" else 0,
+        "ligand_resnames": ligand_resnames,
     }
 
     task.work_dir = str(work_dir)

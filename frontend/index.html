@@ -265,13 +265,18 @@
         </div>
       </div>
       <div class="form-group ligand-upload-primary" id="ligand-mol2-group">
-        <label for="mol2-file"><span class="ligand-color-dot ligand-dot-1"></span>配体 1 · MOL2 <span class="ligand-tag">LIG1</span></label>
+        <label for="mol2-file"><span class="ligand-color-dot ligand-dot-1"></span>配体 1 · MOL2 <span class="ligand-tag" id="ligand-tag-1">LIG1</span></label>
         <div class="file-input-wrapper">
           <div class="file-input-zone">
             <span class="file-input-btn">选取文件</span>
             <span class="file-name" id="mol2-name">未选择文件</span>
             <input type="file" id="mol2-file" accept=".mol2" class="file-input-native">
           </div>
+        </div>
+        <div class="ligand-resname-row">
+          <label for="ligand-resname-1">残基名</label>
+          <input type="text" id="ligand-resname-1" class="ligand-resname-input" maxlength="4" placeholder="LIG1" autocomplete="off" spellcheck="false" title="写入 MOL2/GRO 的残基名，1–4 字符，字母开头">
+          <span class="hint ligand-resname-hint">可选；默认 LIG1。最长 4（GRO 栏宽 5，兼容 Amber）</span>
         </div>
       </div>
       <div class="form-group ligand-upload-primary hidden" id="ligand-pdbqt-group">
@@ -331,6 +336,11 @@
           <input type="file" accept=".mol2" class="file-input-native ligand-extra-file">
         </div>
         <button type="button" class="btn btn-sm btn-secondary ligand-remove-btn">移除</button>
+      </div>
+      <div class="ligand-resname-row">
+        <label>残基名</label>
+        <input type="text" class="ligand-resname-input" maxlength="4" placeholder="" autocomplete="off" spellcheck="false" title="写入 MOL2/GRO 的残基名，1–4 字符，字母开头">
+        <span class="hint ligand-resname-hint">可选；最长 4 字符</span>
       </div>
     </div>
   </template>

@@ -155,6 +155,7 @@ def _run_pipeline_body(
             work_dir,
             add_hydrogens=add_h,
             confirmed_charges=confirmed_map,
+            resnames=params.get("ligand_resnames"),
         )
         params["ligands"] = [
             {

@@ -847,6 +847,15 @@
       showError("模拟时长仅支持 10 ns、100 ns 或 200 ns");
       return;
     }
+    // 分开上传 MOL2：校验自定义残基名长度/字符集
+    if (isMol2Mode() && !isComplexMode() && !isPdbqtMode() && window.WebMD && window.WebMD.validateLigandResnames) {
+      var nMol2 = getMol2Files().length;
+      var rnErr = window.WebMD.validateLigandResnames(nMol2);
+      if (rnErr) {
+        showError(rnErr);
+        return;
+      }
+    }
     if (isPeptideMode() && isComplexMode()) {
       params.protein_chains = getSelectedProteinChains().join(",");
       params.peptide_chain = getSelectedPeptideChain();
