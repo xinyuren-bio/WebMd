@@ -2,7 +2,7 @@
 # 功能说明：antechamber + parmchk2 生成 GAFF2；净电荷须用户确认或高置信检测
 # 使用方法：由 pipeline 调用 parameterize_ligands(...)
 # 依赖环境：AmberTools；pip install rdkit；Open Babel 可选
-# 生成时间：2026-07-24
+# 生成时间：2026-07-22
 # ==================================================
 
 from __future__ import annotations
@@ -599,59 +599,9 @@ def _add_hydrogens_mol2(src: Path, dst: Path) -> bool:
     return False
 
 
-# GRO 残基名栏宽 5；Amber/本站惯例与 LIG1 对齐，自定义上限 4
-LIGAND_RESNAME_MAX_LEN = 4
-_LIGAND_RESNAME_FORBIDDEN = frozenset({
-    "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS", "HID", "HIE", "HIP",
-    "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", "TYR", "VAL",
-    "HSD", "HSE", "HSP", "CYX", "ASH", "GLH", "LYN", "ACE", "NME", "NHE",
-    "SOL", "WAT", "HOH", "TIP3", "TIP4", "SPC", "NA", "CL", "K", "MG", "CA", "ZN",
-    "NA+", "CL-", "K+", "MG2", "CA2", "ZN2",
-})
-
-
-def normalize_ligand_resname(raw: str, default: str) -> str:
-    """规范化用户自定义配体残基名；空则用 default。
-
-    限制：1–4 字符，字母开头，仅字母数字；不得与标准氨基酸/溶剂名冲突。
-    """
-    s = (raw or "").strip().upper()
-    if not s:
-        s = (default or "LIG").strip().upper()
-    if len(s) > LIGAND_RESNAME_MAX_LEN:
-        raise ValueError(
-            f"配体残基名「{s}」过长：最多 {LIGAND_RESNAME_MAX_LEN} 个字符"
-            f"（GRO 栏宽 5，本站为兼容 Amber 限制为 {LIGAND_RESNAME_MAX_LEN}）"
-        )
-    if not re.match(r"^[A-Z][A-Z0-9]*$", s):
-        raise ValueError(
-            f"配体残基名「{s}」不合法：须以字母开头，仅含字母与数字"
-        )
-    if s in _LIGAND_RESNAME_FORBIDDEN:
-        raise ValueError(f"配体残基名「{s}」与氨基酸/溶剂保留名冲突，请更换")
-    return s
-
-
-def resolve_ligand_resnames(
-    n: int,
-    custom: list[str] | None = None,
-) -> list[str]:
-    """解析 n 个配体的残基名列表（缺省 LIG1/LIG2/LIG3），并检查互不重复。"""
-    if n < 1:
-        return []
-    customs = list(custom or [])
-    out: list[str] = []
-    for i in range(1, n + 1):
-        raw = customs[i - 1] if i - 1 < len(customs) else ""
-        out.append(normalize_ligand_resname(raw, f"LIG{i}"))
-    if len(set(out)) != len(out):
-        raise ValueError(f"配体残基名不可重复：{', '.join(out)}")
-    return out
-
-
 def _set_mol2_resname(p: str, resname: str) -> None:
-    """统一 MOL2 残基名（写入时截断至本站上限）。"""
-    rn = (resname or "LIG")[:LIGAND_RESNAME_MAX_LEN]
+    """统一 MOL2 残基名。"""
+    rn = (resname or "LIG")[:7]
     lines_out = []
     in_atom = False
     with open(p, encoding="utf-8", errors="replace") as f:
@@ -1068,18 +1018,16 @@ def parameterize_ligands(
     add_hydrogens: bool = True,
     *,
     confirmed_charges: dict[int, int] | None = None,
-    resnames: list[str] | None = None,
 ) -> list[dict]:
-    """批量参数化；confirmed_charges 为 {配体序号: 净电荷}；resnames 为可选自定义残基名。"""
+    """批量参数化；confirmed_charges 为 {配体序号: 净电荷}（用户确认后传入）。"""
     if not mol2_paths:
         raise ValueError("至少需要一个 MOL2 文件")
     if len(mol2_paths) > 3:
         raise ValueError("最多支持 3 个配体")
     conf = confirmed_charges or {}
-    names = resolve_ligand_resnames(len(mol2_paths), resnames)
     out = []
     for i, p in enumerate(mol2_paths, 1):
-        rn = names[i - 1]
+        rn = f"LIG{i}"
         gaff_mol2, frcmod, summary = parameterize_ligand(
             p,
             work_dir,
