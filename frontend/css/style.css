@@ -2706,39 +2706,34 @@ body.workspace-guide #app {
   background: var(--color-bg);
   border: 1px solid var(--color-border);
 }
-.ligand-resname-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-.ligand-resname-row > label {
-  margin: 0;
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-  white-space: nowrap;
-}
-.ligand-resname-input {
-  width: 5.5rem;
-  padding: 4px 8px;
+/* 标题旁可编辑残基名：外观贴近原 LIG 标签 */
+.ligand-tag-input {
+  display: inline-block;
+  width: 3.6rem;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.85rem;
+  font-size: 0.7rem;
+  font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  text-align: center;
+  color: var(--color-text-muted);
   background: var(--color-bg);
+  vertical-align: middle;
+  cursor: text;
+}
+.ligand-tag-input:hover {
+  border-color: var(--color-primary, #2563eb);
   color: var(--color-text);
 }
-.ligand-resname-input:focus {
+.ligand-tag-input:focus {
   outline: none;
   border-color: var(--color-primary, #2563eb);
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
-}
-.ligand-resname-hint {
-  margin: 0;
-  font-size: 0.75rem;
+  color: var(--color-text);
 }
 .ligand-extra-list {
   margin-top: 12px;
