@@ -2,7 +2,7 @@
 # 功能说明：统一配体定义（小分子/肽），固化 Receptor/Ligand/Complex 到 index.ndx
 # 使用方法：前处理末尾 write_ligand_spec + ensure_standard_ndx_groups；导出/分析读 load_ligand_spec
 # 依赖环境：Python 标准库
-# 生成时间：2026-07-22
+# 生成时间：2026-07-24
 # ==================================================
 
 from __future__ import annotations
@@ -209,9 +209,17 @@ def _ligand_atom_ids(atoms: list[dict], spec: dict[str, Any]) -> list[int]:
             names = {_norm_resname(x) for x in (ent.get("resnames") or []) if x}
             if not names:
                 continue
+            n_before = len(lig_ids)
             for at in atoms:
                 if _norm_resname(at["resname"]) in names:
                     lig_ids.append(at["gid"])
+            # Amber/tleap 常把 LIG1 改名为 RES；spec 仍为 LIG* 时回退匹配 RES
+            if len(lig_ids) == n_before:
+                alt = {f"LIG{i}" for i in range(1, 4)} | {"LIG", "MOL", "UNL", "UNK"}
+                if names & alt:
+                    for at in atoms:
+                        if _norm_resname(at["resname"]) == "RES":
+                            lig_ids.append(at["gid"])
     # 去重保序
     seen: set[int] = set()
     out: list[int] = []

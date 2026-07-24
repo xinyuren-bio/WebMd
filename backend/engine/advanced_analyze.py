@@ -2,7 +2,7 @@
 # 功能说明：高级轨迹分析（三组 RMSD、Gibbs FEL、SASA+二级结构）
 # 使用方法：由 traj_analyze.py 调用 run_advanced(...)，或独立运行
 # 依赖环境：GROMACS gmx；numpy、matplotlib
-# 生成时间：2026-07-23
+# 生成时间：2026-07-24
 # ==================================================
 
 from __future__ import annotations
@@ -383,6 +383,27 @@ def _读环肽残基范围(wd: Path) -> Optional[Tuple[int, int]]:
     return None
 
 
+def _是有效配体残基名(rn: str) -> bool:
+    """判断残基名是否可作配体候选（排除盒子行误切、纯数字残基号等）。
+
+    设计思路：gro 末行是盒子边长（三个浮点数）。若边长形如 11.10019，
+    固定切片 ln[5:10] 会得到「10019」；make_ndx 的「r 10019」会按残基号
+    选中一个水分子，从而在 RMSD 合图中多出假配体曲线。
+    """
+    if not rn or rn in _AA20 or rn in _溶剂离子:
+        return False
+    # 纯数字会被 gmx 当作残基号，而非残基名
+    if rn.isdigit():
+        return False
+    # 盒子行切片常得到 ".6642" / ".1001" 等
+    if rn.startswith(".") or "." in rn:
+        return False
+    # 残基名须以字母开头（允许 Amber 的 NA+ 已在溶剂集；配体如 LIG1/RES/UNL）
+    if not re.match(r"^[A-Z][A-Z0-9+\-]*$", rn):
+        return False
+    return True
+
+
 def _从gro找所有配体残基(gro: Path) -> List[str]:
     """从 gro 中推断全部配体残基名（优先 LIG1/LIG2/LIG3）。"""
     if not gro.is_file():
@@ -391,8 +412,11 @@ def _从gro找所有配体残基(gro: Path) -> List[str]:
     for ln in gro.read_text(encoding="utf-8", errors="replace").splitlines()[2:]:
         if len(ln) < 10:
             continue
+        # 跳过盒子行：残基号字段内含小数点（边长浮点数）
+        if "." in ln[0:5]:
+            continue
         rn = ln[5:10].strip().upper()
-        if not rn or rn in _AA20 or rn in _溶剂离子:
+        if not _是有效配体残基名(rn):
             continue
         het[rn] = het.get(rn, 0) + 1
     if not het:
@@ -401,7 +425,8 @@ def _从gro找所有配体残基(gro: Path) -> List[str]:
     found = [r for r in lig_order if r in het]
     if found:
         return found
-    for pref in ("UNL", "LIG", "MOL", "UNK", "UN1"):
+    # Amber/tleap 常把小分子残基名写成 RES
+    for pref in ("UNL", "LIG", "MOL", "UNK", "UN1", "RES"):
         if pref in het:
             return [pref]
     return sorted(het.keys(), key=lambda k: het[k], reverse=True)
