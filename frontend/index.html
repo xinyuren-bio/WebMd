@@ -265,12 +265,12 @@
         </div>
       </div>
       <div class="form-group ligand-upload-primary" id="ligand-mol2-group">
-        <label for="mol2-file"><span class="ligand-color-dot ligand-dot-1"></span>配体 1 · MOL2
-          <input type="text" id="ligand-resname-1" class="ligand-resname-input ligand-tag-input" maxlength="4" placeholder="LIG1" value="" autocomplete="off" spellcheck="false" title="点击修改残基名（1–4 字符，字母开头；空则默认 LIG1）" aria-label="配体 1 残基名">
+        <label for="mol2-file"><span class="ligand-color-dot ligand-dot-1"></span>配体 1 ·
+          <input type="text" id="ligand-resname-1" class="ligand-resname-input ligand-tag-input" maxlength="4" placeholder="LIG1" value="" autocomplete="off" spellcheck="false" title="残基名标签（点击修改，1–4 字符；空则默认 LIG1）" aria-label="配体 1 残基名">
         </label>
         <div class="file-input-wrapper">
           <div class="file-input-zone">
-            <span class="file-input-btn">选取文件</span>
+            <span class="file-input-btn">选取 MOL2</span>
             <span class="file-name" id="mol2-name">未选择文件</span>
             <input type="file" id="mol2-file" accept=".mol2" class="file-input-native">
           </div>
@@ -320,18 +320,18 @@
       <button type="button" class="btn btn-sm btn-secondary" id="btn-add-ligand">+ 添加配体（最多 3 个）</button>
       <p class="hint ligand-upload-hint">多配体时请在 PyMOL / ChimeraX 中预先对齐坐标；复合物模式可从同一 PDB 按配体残基自动拆分并转 MOL2（支持 HETATM，以及 ATOM 中的 UNL 等非标准残基）。
         分开上传时请先 <a class="guide-text-link" href="/#guide-prep-video">观看拆分教程视频</a>（导出 PDB + SDF，再转 MOL2）。
-        标题旁残基名标签可直接点击修改（默认 LIG1/LIG2/LIG3，最长 4 字符）。</p>
+        标题「·」后的标签框为残基名（默认 LIG1/LIG2/LIG3，最长 4 字符，可点击修改）。</p>
     </div>
   </section>
 
   <template id="ligand-extra-template">
     <div class="form-group ligand-extra-row">
-      <label><span class="ligand-color-dot"></span><span class="ligand-extra-label">配体</span> · MOL2
-        <input type="text" class="ligand-resname-input ligand-tag-input" maxlength="4" placeholder="" value="" autocomplete="off" spellcheck="false" title="点击修改残基名（1–4 字符，字母开头）" aria-label="配体残基名">
+      <label><span class="ligand-color-dot"></span><span class="ligand-extra-label">配体</span> ·
+        <input type="text" class="ligand-resname-input ligand-tag-input" maxlength="4" placeholder="" value="" autocomplete="off" spellcheck="false" title="残基名标签（点击修改，1–4 字符）" aria-label="配体残基名">
       </label>
       <div class="file-input-wrapper ligand-extra-input-wrap">
         <div class="file-input-zone">
-          <span class="file-input-btn">选取文件</span>
+          <span class="file-input-btn">选取 MOL2</span>
           <span class="file-name ligand-extra-name">未选择文件</span>
           <input type="file" accept=".mol2" class="file-input-native ligand-extra-file">
         </div>
